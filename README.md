@@ -3,7 +3,8 @@
 A scenario-specialized, evidence-driven macOS disk-cleanup Agent — built as the course
 project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026 summer term.
 
-**Status: scaffold only — no implementation yet.**
+**Status: design phase complete — research corpus + build-ready design docs landed
+(2026-08-30, `docs/DESIGN.md`); implementation starts at M1 (scan + classify).**
 
 ## The idea in one line
 
