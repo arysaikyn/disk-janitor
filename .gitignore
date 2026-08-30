@@ -1,0 +1,25 @@
+# --- Rust / Cargo ---
+/target/
+**/*.rs.bk
+# CI artifact: coverage data
+*.lcov
+tarpaulin-report.html
+
+# --- Local environment & secrets (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.key
+secrets.toml
+config.local.toml
+
+# --- State produced by the tool itself (never commit real scan results) ---
+*.janitor/
+janitor-ledger.jsonl
+*.janitor-ledger.jsonl
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store

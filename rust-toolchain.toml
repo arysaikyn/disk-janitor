@@ -1,0 +1,6 @@
+[toolchain]
+# Pin the toolchain so every machine (and CI) builds identically.
+# 1.97.1 = Arys's local stable as of 2026-08-30; bump deliberately.
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

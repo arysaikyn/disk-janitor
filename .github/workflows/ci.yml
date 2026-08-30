@@ -1,0 +1,21 @@
+# CI: dormant until a GitHub remote exists (Tsinghua Git ignores this dir).
+# Jobs no-op safely while there is no Cargo.toml yet.
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    if: ${{ hashFiles('Cargo.toml') != '' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test --all-features
