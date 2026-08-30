@@ -1,8 +1,10 @@
 # Disk Janitor — SPEC (draft v0)
 
 > Status: **draft**. Seed document distilled from the posted topic (2026-08-27) and
-> course requirements. Iterate this into `docs/DESIGN.md` as implementation decisions
-> land; keep it in sync with the code (course rule).
+> course requirements. Implementation design lives in `docs/DESIGN.md` (architecture),
+> `docs/crate-map.md` (dependencies), `docs/ecosystem-survey.md` (reuse landscape),
+> `docs/design-decisions.md` (ADRs); raw evidence in `docs/research/` (8 notes,
+> versions/licenses verified 2026-08-30).
 
 ## 1. Positioning
 
@@ -20,7 +22,7 @@ why, and how do I get them back if I'm wrong?**"
 | Tool | What it gives | What it lacks |
 |---|---|---|
 | `du` / `ncdu` | byte locations | no safety judgment; no memory between runs |
-| DaisyDisk | pretty maps | undo depends on Trash not being emptied |
+| DaisyDisk | pretty maps | undo is best-effort at best — its "collect & delete" model is permanent-unlink (collector emptied on quit); nothing guarantees reversibility |
 | CleanMyMac | "Safety Database" | black-box, human-curated rules; no lockfile/rebuild reasoning |
 | dua-cli | newest-dir detection | officially "naming-based, deliberately conservative" |
 | Generic LLM agent | knows DerivedData is deletable | won't act (irreversible), no persistent ledger, re-judges weekly, can't batch-rollback |

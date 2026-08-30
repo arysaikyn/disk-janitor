@@ -20,6 +20,17 @@ and lets you undo everything for 72 hours. 删除是操作，恢复是权利。
 - No batch atomicity: one `rm` at a time can't offer whole-batch rollback.
 - It can't be held accountable for its own judgment, so it stops at "advice".
 
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| [`docs/SPEC.md`](docs/SPEC.md) | product spec (draft v0) |
+| [`docs/DESIGN.md`](docs/DESIGN.md) | build-ready technical design (architecture, modules, safety, testing) |
+| [`docs/ecosystem-survey.md`](docs/ecosystem-survey.md) | tool landscape: what to copy, adapt, or reject (licenses verified) |
+| [`docs/crate-map.md`](docs/crate-map.md) | dependency plan + proposed Cargo.toml block (versions verified 2026-08) |
+| [`docs/design-decisions.md`](docs/design-decisions.md) | ADR log — the 10 decisions and their evidence |
+| [`docs/research/`](docs/research/) | 8 research notes: primary-source evidence behind every claim |
+
 ## Core design (see `docs/SPEC.md` for details)
 
 1. **Evidence-driven reclaimability engine** — candidates are graded by rebuild cost
