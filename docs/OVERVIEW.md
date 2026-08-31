@@ -76,7 +76,8 @@ secondary). Zero telemetry. The full safety/UX contract lives in
 | 5 | [`design-decisions.md`](design-decisions.md) | 17 ADRs — every architectural decision + owner verdicts |
 | 6 | [`crate-map.md`](crate-map.md) | every dependency: version, license, why (paste-ready Cargo.toml) |
 | 7 | [`ecosystem-survey.md`](ecosystem-survey.md) | competitors: what we copy, adapt, reject (16 tools) |
-| 8 | [`research/`](research/) | 13 primary-source notes backing every claim above |
+| 8 | [`decision-register.md`](decision-register.md) | the 22 owner decisions from the 08-31 grill (verbatim answers + landing sites) |
+| 9 | [`research/`](research/) | 13 primary-source notes backing every claim above |
 
 **How we got here.** Conceived 2026-08-27 from the course topic post; scaffold 08-30
 (agent files, spec); a 13-note verified research corpus and 12 technical ADRs landed
