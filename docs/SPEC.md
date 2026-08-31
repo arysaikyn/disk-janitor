@@ -4,15 +4,17 @@
 > course requirements. Keep this document in sync with the implementation (course rule).
 > Implementation design lives in `docs/DESIGN.md` (architecture), `docs/crate-map.md`
 > (dependencies), `docs/ecosystem-survey.md` (reuse landscape), `docs/design-decisions.md`
-> (ADRs); raw evidence in `docs/research/` (8 notes, versions/licenses verified 2026-08-30).
+> (ADRs); raw evidence in `docs/research/` (11 notes, versions/licenses verified 2026-08-30;
+> notes 09–11 cover the Windows/Linux/platform-primitives research behind the 3-platform design).
 
 ## 1. Positioning
 
-A macOS-only, developer-focused disk-cleanup **Agent**. It answers the question
-`du` can't: not "where are the bytes?" but "**which of these are safe to reclaim,
-why, and how do I get them back if I'm wrong?**"
+A developer-focused disk-cleanup **Agent**, native on macOS, Windows, and Linux. It answers
+the question `du` can't: not "where are the bytes?" but "**which of these are safe to reclaim,
+why, and how do I get them back if I'm wrong?**" (macOS design researched first [04][05];
+Windows/Linux taxonomies and cross-platform FS primitives in notes 09–11.)
 
-- Users: developers on capacity-starved Macs (Arys: 16 GB MacBook 飘红常客;
+- Users: developers on capacity-starved machines (Arys: 16 GB MacBook 飘红常客;
   classmates with 512 GB drives on 2-week cleaning cycles).
 - Boundary: it only services the disk-cleanup scenario. It is not a general file
   manager and not a generic chat wrapper.
@@ -41,8 +43,9 @@ wrong?") are 99% of cleanup work; no existing tool owns either end-to-end.**
    `~/Library/Caches` entry with mtime < 10 min → actively written, refuse auto-action).
 2. **Two-phase safe execution protocol** — `plan` → `apply` → `purge` → `restore`:
    - `plan`: reviewable JSON manifest (terraform-plan style).
-   - `apply`: atomic same-volume move into an on-volume quarantine dir via
-     `renamex_np(RENAME_EXCL)` — zero bytes freed, fully reversible.
+   - `apply`: atomic same-volume move into an on-volume quarantine dir (macOS
+     `renamex_np(RENAME_EXCL)`; per-OS equivalents behind the `platform/` layer — §4/§8)
+     — zero bytes freed, fully reversible.
    - `purge`: actually frees space; requires typing the exact byte count.
    - `restore`: one command, full restoration within the 72 h grace window.
    - WAL (write-ahead log) ⇒ crash-recoverable; 删除是操作，恢复是权利.
@@ -53,11 +56,14 @@ wrong?") are 99% of cleanup work; no existing tool owns either end-to-end.**
 ## 4. Architecture sketch
 
 ```
-src/
-  scan/      walker (parallel, metadata-first: size/mtime/flags)
+  scan/      walker (parallel, metadata-first: size/mtime/flags; dua-core on macOS,
+             portable ignore::WalkParallel baseline elsewhere [10][11])
   classify/  evidence engine + rebuild-cost grading (rule engine, local)
   plan/      candidate selection under policy constraints → JSON manifest
-  execute/   quarantine (renamex_np) / purge / restore, WAL
+  execute/   quarantine / purge / restore, WAL (syscall via platform/)
+  platform/  per-OS abstraction: AtomicMove / Walker / VolumeInfo / DatalessCheck traits
+             with #[cfg]-gated impls per OS (macOS renamex_np; Linux renameat2 + fs probe;
+             Windows FileRenameInfoEx) [09][10][11]
   ledger/    persistent JSONL 台账: every verdict & operation, cross-session memory
   policy/    NL → structured constraints (local rules; optional LLM)
   agent/     agent loop: model ↔ tools (scan/classify/plan/apply), stop conditions,
@@ -95,10 +101,22 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 - Classification thresholds (e.g. "mtime < 10 min ⇒ actively written") — need tuning.
 - Grace period: is 72 h right?
 - APFS snapshot interactions; iCloud placeholder files (dataless) — scan must not
-  trigger evict/download; classify must mark them appropriately.
-- Purge semantics on external volumes (quarantine must stay same-volume to be atomic).
+  trigger evict/download; classify must mark them appropriately. Per-platform analogs:
+  OneDrive `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` placeholders on Windows; none on Linux
+  (NFS/autofs/overlayfs are the nearest analogues) [09 §3][11 §3].
+- External volumes: quarantine must stay same-volume to be atomic, but "same-volume" is
+  per-OS (macOS `st_dev`; Windows `dwVolumeSerialNumber`; Linux mount resolution via
+  `/proc/self/mountinfo`), and atomic-no-clobber support itself is a per-fs/per-OS matrix
+  (Linux `renameat2` NFS gap; Windows SMB; exFAT no `RENAME_EXCL` on macOS) — plan must
+  probe and refuse with evidence where unsupported [05 §1][09 §0][10 §0][11 §1/§4].
 
 ## 8. Explicit non-goals
+Cross-platform scope is a goal (§1); what stays out: generic file search; content indexing;
+auto-delete daemon (monitoring/reminder maybe later per classmate feedback). What is NOT
+promised is identical atomicity on every platform — the honest guarantee:
 
-Windows/Linux support; generic file search; content indexing; auto-delete daemon
-(monitoring/reminder maybe later per classmate feedback).
+| Platform | Atomic no-clobber quarantine move | Caveats |
+|---|---|---|
+| macOS | full atomicity — `renamex_np(RENAME_EXCL)` [05 §1] | exFAT/FAT lack `VOL_CAP_INT_RENAME_EXCL` (probe + refuse) [05 §1] |
+| Linux | atomicity on kernels ≥ 3.15 with `renameat2(RENAME_NOREPLACE)`, fs-dependent (ext4 ≥3.15, btrfs/tmpfs ≥3.17, xfs ≥4.0, many more ≥4.9) [10 §0][11 §1] | NFS rejects `RENAME_NOREPLACE` (`EINVAL`) — probe per volume, fall back or refuse [11 §1/risks] |
+| Windows | POSIX-semantics rename via `SetFileInformationByHandle(FileRenameInfoEx)` (Win10 1709+; 1607 headers) [09 §delta][11 §1] | no explicit min-version in [MS-FSCC] — runtime probe, `MoveFileExW` fallback is weaker (non-atomic w.r.t. open targets); no dir-fsync (NTFS journal) [09 §delta][11 §1/§2] |

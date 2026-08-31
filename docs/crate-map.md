@@ -2,10 +2,13 @@
 
 Verified 2026-08-30. Every version/license claim cites a research note:
 [04] `docs/research/04-rust-walk-and-metadata-crates.md` · [05] `05-macos-fs-edge-cases.md` ·
-[06] `06-tui-stack-ratatui.md` · [07] `07-llm-agent-loop-rust.md` · [08] `08-ledger-wal-crash-safety.md`.
+[06] `06-tui-stack-ratatui.md` · [07] `07-llm-agent-loop-rust.md` · [08]
+`08-ledger-wal-crash-safety.md` · [09] `09-windows-junk-taxonomy.md` · [10]
+`10-linux-junk-taxonomy.md` · [11] `11-cross-platform-primitives.md`.
 [01] (`01-oss-disk-analyzers.md`) and [02] (`02-macos-cleanup-landscape.md`) are cited only for
 supplementary facts (dust config precedent; Commons Clause license caveat; serde licensing).
-Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy / agent / ui / config.
+Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy / agent / ui / config
+/ platform (§1f — per-OS gated dependencies from notes 09–11).
 
 ## 1. Crates table
 
@@ -80,6 +83,46 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 > verified on 2026-08-30 for the crates listed above; for these, check crates.io at Cargo.toml
 > authoring time and pin what it reports. No version/license claim here is fabricated.
 
+### 1f. Platform-gated dependencies (notes 09–11, verified 2026-08-30)
+
+Every row is `#[cfg]`-gated per OS; the `windows`/`winreg` crates do not compile their Win32
+modules on other targets — keep the cfg at the module boundary [09 §crates].
+
+#### Windows (`[target.'cfg(windows)'.dependencies]`)
+
+| Crate | Ver (2026-08) | License | Purpose / verdict | Notes |
+|---|---|---|---|---|
+| `windows` | 0.62.2 [09][11] | MIT OR Apache-2.0 [09][11] | PRIMARY Win32 bindings: `SetFileInformationByHandle`/`FileRenameInfoEx` (no-clobber = omit `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` 0x1; POSIX_SEMANTICS 0x2), `FlushFileBuffers` (WAL durability), `MoveFileExW` (pre-1709 fallback), `GetTempPathW`, `CreateFileW`, `BY_HANDLE_FILE_INFORMATION`, `FileIdBothDirInfo` bulk enumeration, `FOLDERID_*` | official microsoft-rs bindings; versions/licenses via crates.io API 2026-08-30 [09][11]; feature sets `Win32::Storage::FileSystem` + `Win32::System::Threading` [11] |
+| `windows-sys` | 0.61.2 [09] | MIT OR Apache-2.0 [09] | raw-bindings alternative for the same calls — cheaper compile; same source of truth (std itself uses its rename constants) | pick ONE of windows/windows-sys; std's two-tier rename (MoveFileExW → FileRenameInfoEx) is the reference implementation [11] |
+| `winreg` | 0.56.0 [09] | MIT [09] | enumerate `HKLM\…\Explorer\VolumeCaches` (cleanmgr handler discovery) + `HKCU\…\Lxss` `BasePath` (WSL vhdx locations) | thin registry wrapper |
+| `same-file` | 1.0.6 [09][11] | Unlicense/MIT [09][11] | same-volume check via `BY_HANDLE_FILE_INFORMATION` volume-serial compare; `Handle` equality (volume serial + file index) works on UNC paths too | portable; also listed under cross-platform |
+| `trash` (optional) | 5.2.6 [05][11] | MIT [05][11] | Windows backend = `IFileOperation` COM (`FOF_NO_UI \| FOF_ALLOWUNDO \| FOF_WANTNUKEWARNING`) — Recycle Bin as purge-time handoff ONLY, never the restore path | COM apartment feature flags `coinit_*` [11 §6] |
+
+#### Linux (`[target.'cfg(target_os = "linux")'.dependencies]`)
+
+| Crate | Ver (2026-08) | License | Purpose / verdict | Notes |
+|---|---|---|---|---|
+| `rustix` | 1.1.4 [05][10][11] | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT [05][10][11] | `fs::renameat_with` (`RenameFlags::NOREPLACE` — the syscall layer for `renameat2` where the glibc wrapper is missing), `fs::syncfs`, `fs::statx` (birth time via `StatxFlags::BTIME`) | libc-free syscall layer; already in the core table for xattr — same version, no new dep [10][11] |
+| `libc` | 0.2.189 [04][05][08][10][11] | MIT OR Apache-2.0 [10][11] | `renameat2` fn + `RENAME_NOREPLACE=1`/`RENAME_EXCHANGE=2`/`RENAME_WHITEOUT=4` constants (gnu module) | already the core FFI dep; on Linux it gains renameat2/statx duty [11] |
+| `nix` | 0.31.3 [05][08][10] | MIT [05][08][10] | `statvfs`, xattr, mount resolution, `renameat2` wrappers where libc provides them | platform-gate with `#[cfg(target_os = "linux")]` [10] |
+
+Linux FS-matrix caveat [10 §0][11 §1]: `renameat2(RENAME_NOREPLACE)` support is kernel/FS-gated
+(ext4 ≥3.15, btrfs/tmpfs ≥3.17, xfs ≥4.0, many more ≥4.9; **NFS: unsupported** — `nfs_rename()`
+returns `-EINVAL` for any flags) ⇒ probe per volume via `/proc/self/mountinfo` fstype; on NFS
+fall back to `O_TMPFILE`+`linkat` staging or refuse auto-action. glibc wrapper needs 2.28
+(`_GNU_SOURCE`); raw `syscall(SYS_renameat2, …)` only for glibc < 2.28 (musl: wrapper since 1.1.24,
+not re-verified).
+
+#### Cross-platform (all targets; already in core table unless noted)
+
+| Crate | Ver (2026-08) | License | Purpose / verdict | Notes |
+|---|---|---|---|---|
+| `same-file` | 1.0.6 [04][09][10][11] | Unlicense/MIT [09][10][11] | same-volume / hardlink identity: Unix `(st_dev, st_ino)` vs Windows `GetFileInformationByHandleEx(FileIdInfo)` `(volume_serial, file_index)` with documented file-index-aliasing fallback | prefer `Handle` equality over raw `st_dev` for quarantine-volume checks [11 §4] |
+| `filetime` | 0.2.29 [11] | MIT/Apache-2.0 [11] | set/preserve mtime across move/restore | per-OS `src/unix/macos.rs` getattrlist fast path + utimensat fallback [11 §7] |
+| `xattr` | 1.6.1 [05][11] | MIT OR Apache-2.0 [05][11] | evidence tags on quarantined files — **unix only** | Windows is compile-ok-but-unsupported (`SUPPORTED_PLATFORM=false`, io::Error at runtime) [11 §7] ⇒ ledger-based metadata, not fs-xattr [11 risks #5] |
+| `trash` | 5.2.6 [05][11] | MIT [05][11] | OS trash per backend: macOS `NSFileManager`/Finder (delete-only), Windows `IFileOperation`, Linux FreeDesktop (`.trashinfo` replay via `os_limited::restore_all`) | crate msrv 1.85 [11]; FreeDesktop cross-topdir fallback = non-atomic copy+delete ⇒ never our restore path [11 §6/risks]; Linux getmntent UB note — pin calls to one thread [11 risks #4] |
+| `dirs` | 6.0.0 [11] | MIT OR Apache-2.0 [11] | per-OS roots: `cache_dir` = `$XDG_CACHE_HOME|$HOME/.cache` / `{FOLDERID_LocalAppData}` / `~/Library/Caches` | `runtime_dir`/`executable_dir` are Linux-only (return `None` elsewhere) — gate by `Option` [11 §7] |
+
 ## 2. Pitfalls table
 
 | Pitfall | Detail | Source |
@@ -100,6 +143,13 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 | rustix license triple | rustix is Apache-2.0 OR MIT OR Apache-2.0-WITH-LLVM-exception — unusual triple; fine for use, attribute correctly if vendoring | [05] |
 | num_cpus vs std | `std::thread::available_parallelism` covers most needs; num_cpus only if you mirror dua's exact `threads` plumbing | [04] |
 | signal-hook transitive version | we list signal-hook 0.4.4 while crossterm 0.29 pulls signal-hook 0.3.17 transitively — two minor lines in one tree. Harmless (they don't share types across our boundary; we use only signal-hook's own flag/mio surface), but check `cargo tree -d` at pin time and prefer routing through crossterm's own SIGWINCH handling where possible | [06] |
+| Windows rename semantics | No-clobber = *omit* `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` — `FILE_RENAME_FLAG_NO_REPLACE` does not exist; [MS-FSCC] documents no min OS version for `FileRenameInfoEx` (headers appear in Win10 1607; POSIX_SEMANTICS usable per Win10 1709, rust-lang#123985) ⇒ runtime probe + `MoveFileExW` fallback, never compile-time assumption; whether POSIX rename covers directory targets is undocumented; SMB shares have no POSIX rename semantics — treat as external volumes | [09 §delta/risks][11 §1/risks] |
+| NTFS hardlink/junction specifics | `CreateHardLink` can't reference directories or cross volumes; junctions (mount-point reparse points) may cross local volumes — walker must never descend them; NTFS has no per-file CoW ⇒ freed-byte estimates rely on hardlinks only (no APFS-clone analog); supersede-disposition opens fail while an ADS is open | [09 §0][11 §4] |
+| Linux renameat2 support matrix | RENAME_NOREPLACE is kernel/FS-gated (ext4 ≥3.15; btrfs/tmpfs/cifs ≥3.17; xfs ≥4.0; many more ≥4.9); NFS rejects ANY rename flags (`-EINVAL`) and its failure does not guarantee the file was not renamed — probe fstype per volume, fall back or refuse; glibc wrapper only ≥2.28 | [10 §0][11 §1] |
+| FreeDesktop trash is not our restore path | cross-topdir trash = non-atomic copy+delete fallback (violates zero-bytes-freed); `.trashinfo` replay is the only restore the trash crate offers on Linux; use own quarantine + WAL instead — trash is purge-time handoff only; `trash` Linux backend uses non-threadsafe `getmntent` under Mutex — single-thread it | [11 §6/risks] |
+| xattrs not portable for metadata | Linux `user.*` xattrs are per-fs (ext4/xfs/tmpfs yes, vfat no); Windows unsupported in the `xattr` crate; BSD flags (`st_flags`) exist in std on macOS only — Linux immutable = `FS_IOC_GETFLAGS` (out of note scope), Windows readonly = `FILE_ATTRIBUTE_READONLY` ⇒ restore metadata lives in the JSONL ledger only | [11 §7/risks] |
+| long paths on Windows | classic MAX_PATH 260; long paths opt-in since Win10 1607, `\\?\` prefix for 32,767 wchar — manifest paths must carry `\\?\` form past 260 and rename targets validated | [09 §0] |
+| jwalk is NOT macOS-only | its cross-platform reputation is stale in the other direction: jwalk 0.9.0 (2026-08-05) is fully portable (std::fs under the hood) — but remains REJECTED here as unmaintained per [04]; dua-core's per-OS native walkers (macOS getattrlistbulk, Windows FileIdBothDirInfo) are the fast-path design to copy | [09 §crates][11 §5] |
 
 ## 3. Proposed [dependencies] block
 
@@ -152,11 +202,28 @@ dirs = "6.0.0"                           # [DESIGN §3.9] XDG/home dir resolutio
 secrecy = "0.10"                         # [DESIGN §3.9] API-key type (no accidental Debug/Display leaks)
 same-file = "1.0.6"                      # [DESIGN §2.4] st_dev/mntonname dev-identity checks
 unicode-segmentation = "1.13.3"          # [06] grapheme-safe truncation for CJK/emoji filenames
+
+# --- platform-gated (notes 09-11) — see §1f for the full version/license table ---
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] } # [09][11] FileRenameInfoEx, FlushFileBuffers, FileIdBothDirInfo
+windows-sys = "0.61.2"                   # [09] raw-binding alternative (pick ONE of the two)
+winreg = "0.56.0"                        # [09] VolumeCaches + Lxss BasePath enumeration
+filetime = "0.2.29"                      # [11] mtime preservation across move/restore (all targets)
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# rustix/libc/nix already in core deps; on Linux they gain renameat2/syncfs/statx duty [10][11]
+filetime = "0.2.29"                      # [11] utimensat path
+
+[target.'cfg(unix)'.dependencies]
+xattr = "1.6.1"                          # [05][11] evidence tags (unix only; Windows unsupported)
 ```
 
 Notes: `dashmap` stays optional until classifier threads provably need shared maps [04];
 `reqwest-eventsource` vs `eventsource-stream` — enable exactly one [07]; keep SSE crates disabled
-while async-openai parses streams itself [07].
+while async-openai parses streams itself [07]. Platform-gated blocks follow §1f: `windows`/
+`windows-sys`/`winreg` must stay inside `[target.'cfg(windows)']` (their Win32 modules do not
+compile elsewhere) [09 §crates]; pick `windows` OR `windows-sys`, never both [09];
+`filetime`/`xattr`/`same-file`/`dirs` are listed once per gate only where their surface differs.
 
 ## 4. Feature-gating strategy
 

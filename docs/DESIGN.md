@@ -1,15 +1,20 @@
 # Disk Janitor — Technical Design
 
 > Build-ready architecture, 2026-08-30. Sources: `docs/SPEC.md` (draft v0) + research notes
-> `docs/research/02…08-*.md` (all verified 2026-08-30), cited inline as `[NN §x]`.
+> `docs/research/02…11-*.md` (02–08 verified 2026-08-30; 09–11 are the Windows/Linux/
+> cross-platform-primitives notes behind the 3-platform amendment), cited inline as `[NN §x]`.
 > Layout = single Rust crate `disk_janitor` (lib + bin); modules per SPEC §4.
 > Integration tests link the lib; no runtime besides per-thread runtimes (§2).
 
 ## 1. Overview
 
-**Product claim.** Disk Janitor is a macOS-only, developer-focused disk-cleanup agent that
-answers the one question `du` can't: not "where are the bytes?" but "which of these are safe to
-reclaim, why, and how do I get them back if I'm wrong?" [SPEC §1]. The two halves of that claim
+**Product claim.** Disk Janitor is a developer-focused disk-cleanup agent, native on macOS,
+Windows, and Linux, that answers the one question `du` can't: not "where are the bytes?" but
+"which of these are safe to reclaim, why, and how do I get them back if I'm wrong?" [SPEC §1].
+The macOS design was researched first ([02], [04], [05]); the Windows and Linux taxonomies
+([09], [10]) and the cross-platform FS primitives ([11]) extend it — the judgment/reversibility
+architecture carries over unchanged on all three, only the syscall substrate differs [11 §8].
+The two halves of that claim
 are exactly what no surveyed tool owns end-to-end [02 §2]. Judgment exists today only as
 black-box or name-based heuristics: CleanMyMac's proprietary Safety Database is not
 user-inspectable [02 §1], and dua-cli is deliberately "naming-based, conservative" [SPEC §2].
@@ -125,6 +130,12 @@ ratatui 0.30.2 + crossterm 0.29 (pinned pair [06 §1]), unicode-width, signal-ho
 (CLI only), async-openai 0.41.3 + tokio (agent thread only), tiktoken-rs, serde / serde_json /
 toml, crc32fast, tempfile 3.27.0, fs4, fs-err, same-file, dirs, secrecy.
 
+Per-platform additions behind `#[cfg]` gates ([09][10][11]): Windows — `windows` 0.62.2 or
+`windows-sys` 0.61.2 (FileRenameInfoEx / FlushFileBuffers / bulk enumeration), `winreg` 0.56.0;
+Linux — `rustix` `fs::renameat_with`/`syncfs`/`statx`, `libc` `renameat2` + `RENAME_NOREPLACE`;
+portable — `same-file` 1.0.6 (volume/file-index identity), `dirs` 6.0.0 (XDG/FOLDERID),
+`filetime` 0.2.29 (mtime preservation). Full version/license table: `crate-map.md` §1f.
+
 ## 3. Module designs
 
 For each module: responsibility, key types, public API sketch, crates, and the research that
@@ -140,6 +151,7 @@ justifies it. Fields are the contract; method bodies elided.
 | Sizes | capture both apparent (`ATTR_FILE_DATALENGTH`/`len`) and allocated (`ATTR_FILE_DATAALLOCSIZE`/`st_blocks·512`); allocated is what purge actually frees and what the typed confirm shows [04 §5][05 §6] |
 | Dataless | read `SF_DATALESS` from `st_flags`/`getattrlist`; scan never opens content (reads fail `EDEADLK` under the OFF policy — fine, metadata-only) [05 §5] |
 | Snapshots | record `tmutil listlocalsnapshots` per scan for freed-space honesty [02 §3] |
+| Platform note | macOS keeps the dua-core `getattrlistbulk` walker as designed [04 §dua]. Portable baseline everywhere: `ignore` 0.4.33 `WalkParallel` (the only walker fully portable today [11 §5]); per-OS fast paths behind the same `DirStat` output — Linux `statx` birth-time/mtime via rustix [11 §7], Windows `GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk enumeration copied from dua-core's windows module [11 §5]. Linux adds mount resolution per candidate via `/proc/self/mountinfo` (fstype → `renameat2` availability), not just `st_dev` [10 §0][11 §4]. Windows: never follow reparse points/junctions; OneDrive subtrees stat-only; `\\?\` paths past 260 chars [09 §0][09 §3]. |
 
 ```rust
 pub struct ScanOptions { pub roots: Vec<PathBuf>, pub threads: usize,
@@ -473,6 +485,91 @@ pub fn redact(&self) -> String;  // safe debug/log form
 Crates: serde, toml, secrecy, dirs. The DeepSeek peak/off-peak hit/miss pricing split [07 §cost]
 is modeled as multiple `ModelPrice` entries keyed by model name.
 
+
+### 3.10 `platform/` — per-OS abstraction layer
+
+Responsibility: one facade per OS behind shared traits so `scan/`, `execute/`, and `ledger/`
+stay OS-agnostic. Every syscall substrate difference from notes 09–11 lands here; the macOS
+behavior already specified in §3.1–3.4 is the gold-standard baseline [11 §1]. Impl style copies
+the proven cfg-gating idioms: trash-rs's per-OS `mod platform;`, dua-core's `mod macos; mod
+windows;` + std fallback, xattr's `platforms!` macro [11 §7].
+
+Trait sketches (fields are the contract; bodies elided):
+
+```rust
+pub struct AtomicMoveOpts { pub no_clobber: bool, pub nofollow: bool }
+pub trait AtomicMove {
+    /// Quarantine: no-clobber, same-volume only. `EEXIST`/`ERROR_*_ALREADY_EXISTS` family
+    /// mapped to one `MoveError::TargetExists` for the `-<n>` retry loop.
+    fn move_noreplace(&self, from: &Path, to: &Path, opts: AtomicMoveOpts) -> Result<(), MoveError>;
+    /// Restore: replace semantics. Returns the guarantee actually delivered (§5 delta).
+    fn move_replace(&self, from: &Path, to: &Path) -> Result<ReplaceGuarantee, MoveError>;
+    fn probe(&self, vol: &VolumeInfo) -> AtomicitySupport; // cached per volume at scan time
+}
+pub enum ReplaceGuarantee { Atomic /*macOS renamex_np*/, PosixRename /*Win 1709+*/,
+    MoveFileEx /*pre-1709: non-atomic w.r.t. open targets*/, CopyFallback }
+pub enum AtomicitySupport { Full, FsWithGaps /*Linux NFS/Windows SMB*/, None /*refuse at plan*/ }
+```
+
+Per-OS `AtomicMove` impls [11 §1]:
+
+| OS | no-clobber (`apply`) | replace (`restore`) | Probes / fallback |
+|---|---|---|---|
+| macOS | `renamex_np(from, to, RENAME_EXCL \| RENAME_NOFOLLOW_ANY)` — unchanged from §3.4 [05 §1] | `renameatx_np` reverse rename from the WAL pair | capability probe `VOL_CAP_INT_RENAME_EXCL`; `EEXIST` retry suffix [05 §1] |
+| Linux | `renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_NOREPLACE)` — `EEXIST` on target; kernel ≥3.15, glibc wrapper ≥2.28 | plain `rename()` is always POSIX-atomic on Linux | per-volume fstype probe via `/proc/self/mountinfo` field (9): ext4 ≥3.15, btrfs/tmpfs ≥3.17, xfs ≥4.0, many ≥4.9; **NFS rejects any flags (`-EINVAL` in `nfs_rename()`)** — probe once, then `O_TMPFILE`+`linkat(AT_EMPTY_PATH)` staging or refuse auto-action [10 §0][11 §1/risks] |
+| Windows | open source with `DELETE` access (`FILE_FLAG_OPEN_REPARSE_POINT \| FILE_FLAG_BACKUP_SEMANTICS`), then `SetFileInformationByHandle(FileRenameInfoEx, Flags=0)` — no-clobber = *omit* `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` (0x1); POSIX_SEMANTICS (0x2) keeps replaced-file handles valid. Win10 1709+ per rust-lang#123985; [MS-FSCC] states no min version — runtime probe, never assumed | Win10 1709+: `REPLACE_IF_EXISTS \| POSIX_SEMANTICS` (atomic replace, old handles stay valid). Pre-1709: `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` — non-atomic w.r.t. open targets (`ERROR_ACCESS_DENIED`) — the exact two-tier fallback rust std uses | startup probe of `FileRenameInfoEx`; same-volume via `same-file` Handle equality (`dwVolumeSerialNumber`), not raw `st_dev`; `ERROR_NOT_SAME_DEVICE` ⇒ refuse cross-volume [09 §delta][11 §1/§4] |
+
+**Walker.** Trait `Walker { fn walk(opts: WalkOpts) -> DirStream }` with the same `DirStat`
+output contract on every OS: macOS = dua-core 3.3.0 `getattrlistbulk` module (unchanged, §3.1)
+[04 §dua]; portable baseline = `ignore` 0.4.33 `WalkParallel` — the only fully-portable walker
+today — with gitignore semantics disabled for honest byte accounting [11 §5]; per-OS fast paths
+behind the same output, following dua-core's in-tree precedent: Linux `statx` (rustix
+`StatxFlags::BTIME` for birth time; Unix `MetadataExt` `st_dev`/`st_nlink`/`st_blocks` portable
+across Unix) [11 §4/§7], Windows `GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk
+enumeration (dua-cli measured "30x and more performance on Windows" since 2.41) [11 §5].
+Windows walker rules: never descend reparse points (`IO_REPARSE_TAG_MOUNT_POINT` junctions —
+cycles, other volumes, `\\?\` escapes; junction target counts as outside the root); skip
+`\\wsl$` entirely (virtual 9P view; the ext4.vhdx is hands-off) [09 §0/§4]. Linux: resolve each
+candidate's mount from `/proc/self/mountinfo` (field 3 major:minor = `st_dev`, field 9 fstype)
+to decide `renameat2` availability [10 §0][11 §4].
+
+**VolumeInfo.** `trait VolumeInfo { fn volumes() -> Vec<VolumeInfo>; fn capacity(&self) -> ...;
+fn same_volume(&self, a: &Path, b: &Path) -> bool }`. macOS: sysinfo `Disks` + CFURL capacity
+keys, `ImportantUsage` preferred (unchanged §3.1) [04 §sysinfo]. Windows:
+`BY_HANDLE_FILE_INFORMATION.dwVolumeSerialNumber` / `FILE_ID_INFO` replaces `st_dev`; the
+`same-file` crate's `Handle` equality (volume serial + file index, with its documented
+file-index-aliasing fallback) is the portable identity check, valid on UNC paths too [09 §0][11 §4].
+Linux: `statvfs`/`statfs` + mountinfo resolution; `st_dev` compare suffices including bind
+mounts [10 §0][11 §4].
+
+**DatalessCheck.** `trait DatalessCheck { fn is_dataless(&self, md: &impl MetadataLike) -> bool;
+fn scan_open_policy(&self) -> OpenPolicy }` — scan must never trigger hydration on any platform:
+
+| OS | Detection | Rule |
+|---|---|---|
+| macOS | `SF_DATALESS` in `st_flags`/`getattrlist`; `IOPOL_MATERIALIZE_DATALESS_FILES_OFF` at scan start (unchanged, §2.3/§3.1) [05 §5] | read triggers download; metadata-only [05 §5] |
+| Windows | `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` (0x00400000) from `FindFirstFileW`/`WIN32_FIND_DATAW` or `GetFileInformationByHandleEx(FileBasicInfo)`; siblings `RECALL_ON_OPEN`, `OFFLINE`, `PINNED`, `UNPINNED`; open with `FILE_FLAG_OPEN_NO_RECALL` if a handle is unavoidable | OneDrive/cldflt placeholders (Win10 1709+): never open content, size from metadata, never include hydrated size in purge math, never move cross-volume (forces full recall) [09 §0/§3][11 §3] |
+| Linux | no OS-level dataless files — fstype from `/proc/self/mountinfo` is the nearest signal (NFS/autofs/overlayfs analogues) [11 §3] | none of the iCloud/OneDrive kind; no `.placeholder` convention exists in the notes (unverified) |
+
+Dataless evidence stays classify-side on every OS (`Dataless` ⇒ `HandsOff` / refuse move); the
+xattr-based tagging alternative is rejected — xattrs are not portable (Linux per-fs, Windows
+unsupported in the `xattr` crate) ⇒ the JSONL ledger is the only restore-metadata store [11 §7/risks].
+
+Durability mapping (WAL §5.2 across platforms) [11 §2]: macOS `F_FULLFSYNC` + fsync(dirfd)
+(baseline, unchanged); Linux `fsync(file)` + mandatory `fsync(dirfd)` ("calling fsync() does not
+necessarily ensure that the entry in the directory … has also reached disk"), `syncfs` available
+(error reporting since 5.8); Windows `FlushFileBuffers` (needs `GENERIC_WRITE`) or
+`FILE_FLAG_WRITE_THROUGH` — **no directory-fsync API exists**; metadata durability rides NTFS
+journaling, weaker than `F_FULLFSYNC` (documented cache→device write, no platter-barrier
+request). This is the documented Windows guarantee delta of §5.
+
+Crates (full version/license table in `crate-map.md` §1f): Windows-gated `windows` 0.62.2 /
+`windows-sys` 0.61.2 + `winreg` 0.56.0 behind `#[cfg(windows)]` (the crates do not compile
+their Win32 modules elsewhere — keep the cfg at the module boundary) [09 §crates]; Linux-gated
+`rustix` `fs::renameat_with`/`syncfs`/`statx` + `libc` `renameat2` [10 §crates][11 §rec];
+portable `same-file` 1.0.6, `dirs` 6.0.0, `filetime` 0.2.29 (mtime preservation across
+move/restore) [11 §rec].
+
 ## 4. Data flow — one scenario end-to-end
 
 User request, typed in the TUI agent screen: **"腾出 25 GB，别动我这两周在跑的项目"**.
@@ -561,6 +658,30 @@ verbatim) and aggregate statistics [SPEC §3.3][07 §privacy]. Enforcement, stro
 
 Asymmetry, documented: the ledger stores real paths for undo (local-only; the LLM never reads
 it) [08 risk #6].
+
+### 5.5 Platform guarantee delta (Windows)
+
+The §5.1 quarantine invariants hold as written on macOS. On Windows the OS substrate is
+weaker and the delta is documented, not hidden [09 §delta][11 §1/§2]:
+
+- **apply (no-clobber)** remains atomic and TOCTOU-free — `SetFileInformationByHandle(
+  FileRenameInfoEx, Flags=0)` fails if the target exists, on Win10 ≥1607. This is the
+  RENAME_EXCL analog [09 §delta][11 §1].
+- **restore (replace)** is fully atomic (old handles stay valid) only on Win10 ≥1709 with
+  `REPLACE_IF_EXISTS | POSIX_SEMANTICS`; on 1607–1708 it degrades to `MoveFileExW(
+  MOVEFILE_REPLACE_EXISTING)`, which is non-atomic with respect to open targets
+  (`ERROR_ACCESS_DENIED`/sharing violations). Restore correctness still holds because the
+  WAL is written first; only concurrent-reader races surface as errors [11 §1/risks].
+  [MS-FSCC] documents no minimum OS version — the 1709 gate is enforced by a runtime probe
+  with `MoveFileExW` fallback, never assumed [09 risks #1][11 §1].
+- **Crash durability**: no directory-fsync API exists on Windows and `FlushFileBuffers` is
+  weaker than `F_FULLFSYNC` (no platter-barrier request); NTFS journaling carries metadata
+  durability. **Consequently, restore-on-Windows relies on the WAL journal — the recorded
+  `(original_path, quarantine_path)` pairs — rather than any OS Trash semantics.** The
+  shell Recycle Bin (`IFileOperation`) is at most a purge-time handoff surface, never the
+  restore path [11 §2/§6].
+- Same guarantee-shaping rules as macOS apply: cross-volume moves are refused at plan;
+  network shares (SMB has no POSIX rename semantics) are treated as external volumes [11 risks #2].
 
 ## 6. Key type definitions
 
@@ -658,11 +779,12 @@ Invariants worth testing:
 |---|---|
 | Fixture trees | `tests/fixtures/gen.py` (or a Rust bin) builds synthetic trees: node_modules+lockfile, orphan `.venv`, DerivedData-shaped dir, `_cacache` CAS store, pnpm store with hardlinks (`fs::hard_link`), a sparse file (seek+write), a symlink chain + loop, a `UF_HIDDEN` quarantine root (chflags via libc). Dataless cannot be synthesized in userspace (`SF_DATALESS` is kernel-synthetic, read-only [05 §6]) — unit tests mock the flag on `Metadata`-like values (classifier takes the flag as input, not raw lstat); one `#[ignore]`'d integration test runs only where a real iCloud dataless file exists (opt-in, materialization-OFF assertions). Golden classify outputs; property: Σ child `alloc` == parent `alloc` with hardlinks discounted once per `(dev, ino)`. |
 | Syscall-level | `#[cfg(target_os = "macos")]` integration tests on real APFS (`/tmp`): `RENAME_EXCL`→`EEXIST`; `EXDEV` probe vs `/System/Volumes/VM` (skip if absent); `F_FULLFSYNC` rc=0 via nix; `UF_HIDDEN` survives `renamex_np`; hardlink `nlink` preserved across rename; `RENAME_NOFOLLOW_ANY`→`ELOOP` on a symlink path component; `clonefile`→`EEXIST`; capability-probe mask asserted advisory-only [05 §1]. |
+| Platform matrix | CI matrix `macos-latest` / `windows-latest` / `ubuntu-latest` on every push: macOS runs the macOS `Syscall-level` suite above on APFS; Linux runs `renameat2(RENAME_NOREPLACE)`→`EEXIST` on ext4/tmpfs, `EXDEV` across mounts, fsync(file)+fsync(dirfd) WAL ordering, `/proc/self/mountinfo` fstype resolution, NFS/skip gating; Windows runs `FileRenameInfoEx(Flags=0)`→target-exists error, `MoveFileExW` fallback path, `dwVolumeSerialNumber` same-volume check, junction non-descent, `\\?\` long-path manifest round-trip, OneDrive `RECALL_ON_DATA_ACCESS` detection (skip if OneDrive absent) [09 §0/§delta][10 §0][11 §1/§4]. Syscall tests are `#[cfg]`-gated per OS (`#[cfg(target_os = "macos")]`, `#[cfg(target_os = "linux")]`, `#[cfg(windows)]`); portable layers (ledger/WAL, plan, classify fixtures, TUI snapshots, agent loop) run on all three runners. |
 | Crash injection (WAL) | spawn a child `janitor` applying a plan with `KILL_AT ∈ {before_wal_sync, after_wal_sync_before_rename, after_rename_before_result, mid_batch}`; `kill -9`; parent runs `recover()` and asserts: committed ops present exactly once, no phantom ops, torn tail truncated + parked to `*.torn`, `seq` gaps reported. Optional deep probe via `dtrace`/`FSInOut` for cross-file ordering [08 risks #2]. |
 | Ledger property tests | random op sequences + random truncation points → replay invariants hold (skip-and-continue, monotonic `seq` after gaps, no CRC false positives) [08 §5]. |
 | TUI | ratatui `TestBackend` snapshot tests per screen [06 §rec]; input-channel drop ⇒ scan cancel+join (dua semantics) [04 §progress]; the purge modal rejects a mismatched byte string. |
-| Agent | sans-IO `RunState` serde round-trip + resume; a stub OpenAI-compatible HTTP server (e.g. wiremock) covering: malformed `arguments` JSON (repair path), DeepSeek `reasoning_content` echo shape, OpenRouter final usage-chunk deviation, Ollama id-less tool calls, missing final usage chunk (estimate marked unverified, not billed) [07 §providers, risks]; leak-test regexes on every outbound message [07 §privacy 5]. |
 | Scanner edge cases | firmlink walk of `/` (no double-walk of the Data side) [04 §4]; an iCloud-shaped tree scanned with materialization OFF (no downloads — assert no content reads via unchanged mtime/size); a mounted volume appearing mid-tree (`st_dev` reject in `descend`). |
+| Agent | sans-IO `RunState` serde round-trip + resume; a stub OpenAI-compatible HTTP server (e.g. wiremock) covering: malformed `arguments` JSON (repair path), DeepSeek `reasoning_content` echo shape, OpenRouter final usage-chunk deviation, Ollama id-less tool calls, missing final usage chunk (estimate marked unverified, not billed) [07 §providers, risks]; leak-test regexes on every outbound message [07 §privacy 5]. |
 
 ## 8. Build sequencing
 
@@ -671,15 +793,24 @@ Course deadlines: 9/1 comments, 9/6 public demo, 9/8 tryouts, 9/10 presentation 
 | Milestone | Scope | Concrete work items | Exit criterion |
 |---|---|---|---|
 | **M1** scan + classify core | `scan/`, `classify/` + fixtures | cargo workspace skeleton; dua-core integration (`walk_roots`, `Order::ParentFirst`, `descend` dev-check); `setiopolicy_np` `extern "C"` + constants [04 risks]; `VolumeInfo` via sysinfo; fixture generator; classify path rules v1 (node/rust/python/xcode [03 §1–4]) + evidence probes (lockfile, orphan, mtime, nlink); `janitor scan --json` CLI | scanning this Mac yields classified JSON with honest `alloc` bytes |
-| **M2** plan / apply / purge / restore + WAL + ledger | `plan/`, `execute/`, `ledger/` | `renamex_np` layer + capability probe; per-volume quarantine + per-volume WAL; record framing (crc32fast envelope); flock; `recover()`; plan builder + manifest write/load; CLI `plan/apply/purge/restore`; crash-injection harness (`KILL_AT`) | CLI round trip incl. `kill -9` recovery passes |
-| **M3** TUI | `ui/` | ratatui + crossterm (pinned) shell; event loop per §3.8; Dashboard/Review/Plan/Apply screens; purge modal; Ctrl-C semantics; settings pane v0 | full flow usable in TUI (9/6 demo) |
-| **M4** agent + NL policy + token/cost | `agent/`, `policy/`, `config/` | `config.toml` full (R3); NL policy compiler v1; sans-IO `AgentRun` + 6 tools + chokepoint + leak test; usage/cost accounting + budget interrupt; trajectory screen | "腾出 25GB" runs end-to-end under budget |
+**Platform sequencing** (deadlines first, platforms second): M1 stays macOS-first for the
+9/1 comment deadline — the `scan/`/`classify/` core, fixtures, and the dua-core macOS walker
+land on this Mac; the `platform/` traits (§3.10) are sketched at M1 so M2 can slot impls in
+without re-plumbing, but only the macOS impl is exercised until M2 [09][10][11].
+
+| **M2** plan / apply / purge / restore + WAL + ledger | `plan/`, `execute/`, `ledger/` | `renamex_np` layer + capability probe; per-volume quarantine + per-volume WAL; record framing (crc32fast envelope); flock; `recover()`; plan builder + manifest write/load; CLI `plan/apply/purge/restore`; crash-injection harness (`KILL_AT`). **Platform: M2 wires the trait impls for Linux** — `AtomicMove` via `renameat2(RENAME_NOREPLACE)` + per-volume fstype probe (`/proc/self/mountinfo`), fsync(file)+fsync(dirfd) durability pair, XDG cache roots, `requires-elevation` refusal class [10 §0/delta][11 §1] | CLI round trip incl. `kill -9` recovery passes |
+| **M3** TUI | `ui/` | ratatui + crossterm (pinned) shell; event loop per §3.8; Dashboard/Review/Plan/Apply screens; purge modal; Ctrl-C semantics; settings pane v0. **Platform: M3 keeps Windows on the portable baseline** — `ignore::WalkParallel` walker, std path resolution; no Windows-specific UI work [11 §5] | full flow usable in TUI (9/6 demo) |
+| **M4** agent + NL policy + token/cost | `agent/`, `policy/`, `config/` | `config.toml` full (R3); NL policy compiler v1; sans-IO `AgentRun` + 6 tools + chokepoint + leak test; usage/cost accounting + budget interrupt; trajectory screen. **Platform: M4 keeps Windows on the portable baseline** (same as M3); Windows `AtomicMove`/`VolumeInfo` impls (`FileRenameInfoEx`, `dwVolumeSerialNumber`, junction rules) land behind `#[cfg(windows)]` only when CI can exercise them [09 §delta][11 §1/§4] | "腾出 25GB" runs end-to-end under budget |
 | **M5** polish | docs, demo, hardening | demo script; README; DESIGN.md final sync; AI-log export; 开销明细表 generated from ledger `budget` recs; threshold tuning (SPEC §7); edge-case hardening list from §7 | 9/10 presentation |
 
 Dependency notes:
 
 - The §5.2 WAL protocol (reconcile WAL records vs observed FS state) must be spec'd *before*
   coding M2 — it is the open question [08 risk #5].
+- Platform: the CI matrix of §7 (macos/windows/ubuntu) starts at M2 — before that, Windows
+  and Linux builds are compile-checked locally, not behavior-tested; Windows syscall paths
+  (`FileRenameInfoEx` probes, junction handling) are untestable until a windows runner exists,
+  which is why M3/M4 keep Windows on the portable baseline [09 risks #1][11 §5].
 - dua-core is ~10 days old as a standalone crate (first release Aug 2026, ~10k downloads,
   v3.3.0) — pin the exact version, audit `crates/dua-lib/src/macos` unsafe (`attrlist` buffers)
   before shipping; the pre-planned fallback is `ignore::WalkParallel` [04 risks].
@@ -726,4 +857,6 @@ Dependency notes:
 
 *End of DESIGN.md — companion to `docs/SPEC.md`; iterate in lockstep with the code (course
 rule). Open questions from SPEC §7 (grace period, threshold tuning, APFS snapshot interactions,
-external-volume purge semantics) are addressed in §5/§7/§8 and remain config-tunable.*
+external-volume purge semantics — now a per-OS matrix, see §3.10/§5.5) are addressed in
+§5/§7/§8 and remain config-tunable. Platform amendment 2026-08-30: notes 09–11; macOS
+baseline preserved, Linux/Windows deltas documented in §3.10 and §5.5.*

@@ -3,7 +3,7 @@
 > ADR log. Each entry: Status / Context / Decision / Consequences.
 > Citations: research notes `docs/research/NN-*.md` cited as `[NN §x]`, spec as `[SPEC §x]`;
 > all notes verified 2026-08-30. Companion to `docs/DESIGN.md`, which details the designs
-> these ADRs commit to. Every ADR below is Status: accepted.
+> these ADRs commit to. Status lines carry the owner's explicit verdicts from the 2026-08-30 review (upheld / amended / rejected / contested).
 
 ## Index
 
@@ -17,10 +17,12 @@
 - ADR-8 Classification evidence model: evidence chains, 5 grades, CAS GC-only, orphan-first
 - ADR-9 Token/cost accounting: per-call provider-reported usage, budget interrupt
 - ADR-10 Grace window & purge confirmation: typed allocated byte count, 72 h restore
+- ADR-11 Platform strategy — native on macOS, Windows, Linux (`platform/` abstraction, macOS-first order, honest per-OS guarantee table)
+- ADR-12 Windows durability & restore semantics — WAL journal as restore authority, FlushFileBuffers at state transitions
 
 ## ADR-1: Walker — dua-core 3.3.0 over jwalk and ignore
 
-**Status:** accepted (2026-08-30)
+**Status:** amended 2026-08-30 — Arys upheld the macOS dua-core fast path and confirmed the 3-platform amendment (ignore::WalkParallel baseline elsewhere, Walker trait seam).
 
 **Context.** SPEC §4 requires a parallel, metadata-first walker (size/mtime/flags) with live
 progress and interrupt (R4), staying on one filesystem by default. The researched field [04]:
@@ -57,9 +59,22 @@ when dropped [04].
 - While on dua-core, the async-Quit drain bug class never exists; it returns only if the
   ignore fallback is ever activated.
 
+**Amended 2026-08-30 (3-platform):** dua-core remains the **macOS** fast path only — its
+`getattrlistbulk` enumeration and APFS accounting are exactly as decided above. The portable
+baseline on every OS is `ignore` 0.4.33 `WalkParallel` (the only walker fully portable today)
+with per-OS metadata fast paths feeding the same `DirStat` type: Linux `statx` via rustix
+(`StatxFlags::BTIME` birth time; `st_dev`/`st_nlink`/`st_blocks` via portable Unix
+`MetadataExt`) plus per-candidate mount resolution from `/proc/self/mountinfo`; Windows
+`GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk enumeration copied from dua-core's
+windows module (measured "30× and more performance" since dua-cli 2.41), never descending
+reparse points/junctions. The `Walker` trait is the seam — macOS = dua-core, baseline =
+`ignore::WalkParallel`, fast paths behind the identical `DirStat` output contract [11 §4/§5/§7]
+[09 §delta]. The pre-planned ignore fallback of the original decision becomes the baseline
+engine everywhere except macOS.
+
 ## ADR-2: Quarantine primitive — same-volume `renamex_np(RENAME_EXCL)` moves
 
-**Status:** accepted (2026-08-30)
+**Status:** amended 2026-08-30 — Arys upheld the macOS renamex_np design and confirmed the per-OS AtomicMove amendment (Linux renameat2 with fs probe; Windows FileRenameInfoEx with runtime capability probe).
 
 **Context.** SPEC §3.2 mandates `apply` = atomic same-volume move into an on-volume
 quarantine dir, zero bytes freed, fully reversible. [05] resolves the mechanics empirically
@@ -101,9 +116,34 @@ undocumented Put-Back metadata [02 risks #5][05 §7].
 - Restore never depends on Trash Put-Back metadata — the WAL owns the
   `(original, quarantine)` pairs [02 risks #5][05 §7].
 
+**Amended 2026-08-30 (3-platform):** the same-volume atomic move becomes a per-OS
+`AtomicMove` table behind the `platform/` trait (DESIGN §3.10), with the macOS row above as
+the semantics gold standard [11 §1]:
+
+- **Linux** — `renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_NOREPLACE)`: kernel ≥ 3.15,
+  glibc wrapper ≥ 2.28 (libc 0.2.189 ships the constants; rustix `fs::renameat_with` as
+  fallback); `EEXIST` on target feeds the same `-<n>` retry loop. Filesystem support is a
+  matrix (ext4 ≥ 3.15, btrfs/tmpfs ≥ 3.17, xfs ≥ 4.0, many more ≥ 4.9), probed per volume via
+  `/proc/self/mountinfo` fstype — **NFS rejects any flags with `EINVAL`** in `nfs_rename()` and
+  the man page warns the file may still have been renamed; on unsupported/NFS fs the fallback
+  is `O_TMPFILE` + `linkat(AT_EMPTY_PATH)` staging (atomicity preserved) or refuse auto-action;
+  `ENOSYS` (kernel < 3.15) and `EINVAL` (unsupported flag on this fs) at call time route to
+  that same fallback/refuse path — trust errno over the probe, per the macOS advisory-probe
+  precedent [11 §1][10 §0].
+- **Windows** — open source with `DELETE` access
+  (`FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS`), then
+  `SetFileInformationByHandle(FileRenameInfoEx, Flags=0)` (no-clobber = omit
+  `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`; Win10 1607 headers, 1709+ for POSIX_SEMANTICS per
+  rust-lang#123985; `[MS-FSCC]` states no minimum — runtime probe, never assumed). Residual
+  weaker cases are documented, not hidden: restore's replace step is non-atomic w.r.t. open
+  targets pre-1709 (`MoveFileExW(MOVEFILE_REPLACE_EXISTING)` fallback, sharing violations
+  surface as errors), SMB shares have no POSIX rename semantics (treated as external
+  volumes), and metadata durability rides NTFS journaling — **on Windows, restore therefore
+  relies on the WAL journal, not OS Trash** (ADR-12) [11 §1/§2/risks][09 §delta].
+
 ## ADR-3: fsync strategy — `F_FULLFSYNC` via std, dir-sync boundaries, sync per state transition
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30.
 
 **Context.** The WAL only makes operations crash-recoverable if its records actually reach
 permanent storage. On Darwin this is subtle [08 §1–2][05 §4]: plain `fsync(2)` flushes host
@@ -144,7 +184,7 @@ costs ≈ 4 ms vs ≈ 0.075 ms for plain fsync on Apple SSDs [08 §1], and `F_BA
 
 ## ADR-4: Ledger/WAL format — framed JSONL + CRC32 chain + flock, skip-and-continue recovery
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30.
 
 **Context.** SPEC §4 gives `ledger/` a persistent JSONL 台账 (every verdict and operation,
 cross-session memory) and §3.2 mandates WAL crash-recoverability. [08] surveyed the space:
@@ -192,7 +232,7 @@ volume as the quarantine it describes [08 risks #3].
 
 ## ADR-5: TUI stack — ratatui + crossterm pinned, threads + crossbeam, indicatif CLI-only
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30 (scope: demo-trim pending separate M3 planning; stack unchanged).
 
 **Context.** R2 requires an interactive TUI with CLI subcommands as fallback; R4 requires
 live progress and ctrl-c-safe interrupt. [06] distilled four reference TUIs (dua-cli, gitui,
@@ -242,7 +282,7 @@ use it interactively [06 §4][04].
 
 ## ADR-6: Agent-loop HTTP stack — async-openai 0.41.3, sans-IO loop, reqwest rustls
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30 (provider matrix: DeepSeek primary; others best-effort).
 
 **Context.** SPEC §4's `agent/` is an OpenAI-compatible tool-calling loop that must also work
 against DeepSeek, OpenRouter, Ollama, and vLLM (R3: endpoint/key/model configurable). [07]
@@ -294,7 +334,7 @@ pattern gives the model an explicit terminal action [07 §rig].
 
 ## ADR-7: Privacy architecture — opaque IDs + serializer chokepoint + CI leak test
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30 (fully opaque: no paths, no filenames).
 
 **Context.** SPEC §3.3 sets the invariant: the LLM never sees file paths or names — only the
 intent sentence (user-authored) and aggregate statistics. [07 §privacy] and the [02] tool
@@ -338,7 +378,7 @@ cross outward.
 
 ## ADR-8: Classification evidence model — evidence chains, 5 grades, CAS GC-only, orphan-first
 
-**Status:** accepted (2026-08-30)
+**Status:** amended 2026-08-30 — Arys upheld the macOS evidence model and confirmed the per-OS taxonomy matrix (Windows [09], Linux [10]; platform-neutral core signals).
 
 **Context.** SPEC §3.1 mandates evidence-driven reclaimability: classification from machine-
 derived evidence, not directory names — name matching is precisely AppCleaner's false-positive
@@ -390,9 +430,21 @@ a lockfile, so it is the strongest danger signal and is detected first.
 - Thresholds (`hot_mtime`, `ancestor_depth`, `min_bytes`) live in `config.toml` so SPEC §7's
   tuning questions are config changes, not code changes [DESIGN §3.6].
 
+**Amended 2026-08-30 (3-platform):** the taxonomy becomes a per-OS evidence matrix — macOS
+tables [03 §0–8] unchanged as the baseline, joined by Windows [09] and Linux [10]. The core
+evidence signals (lockfile presence, sibling-manifest absence = orphan, mtime recency, file
+locks, `.git` ancestor, CAS shape) are platform-neutral and carry over 1:1; only the read
+substrate differs per OS (`lsof`-equivalent flock markers → Windows `CreateFileW`
+sharing-violation probe; `st_nlink` → NTFS `nNumberOfLinks`; reparse points/junctions,
+OneDrive placeholders, privilege boundaries, package-manager ownership, CACHEDIR.TAG are
+per-OS additions) [09 §0][10 §0]. Path tables remain per-OS (`~/Library/Caches` ↔
+`%LOCALAPPDATA%` ↔ XDG `.cache`); macOS mirrors map 1:1 onto the Linux/Windows equivalents
+for pip/uv/npm/CAS stores. GC-only, orphan-first, and grading rules are unchanged on all
+three [09 §delta][10 §delta].
+
 ## ADR-9: Token/cost accounting — per-call provider-reported usage, budget interrupt
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30 (warn 80%, hard stop 100% between turns).
 
 **Context.** R6 requires per-call usage capture → running cost at configured prices →
 interrupt at budget. [07 §cost] establishes the ground rules: provider-reported usage is the
@@ -441,7 +493,7 @@ models — DeepSeek/Ollama use their own BPE, so local estimates are approximati
 
 ## ADR-10: Grace window & purge confirmation — typed allocated byte count, 72 h restore
 
-**Status:** accepted (2026-08-30)
+**Status:** upheld — Arys, 2026-08-30 (batch total, 72 h grace).
 
 **Context.** The product claim [SPEC §1] is judgment + reversibility; `purge` is the only
 irreversible step, so it needs a gate no other tool has. [02]'s tool survey shows why the
@@ -489,7 +541,108 @@ default, flagged as a SPEC §7 open question.
   hardlink-discounted totals the plan manifest displayed, so a mismatch means the plan changed
   under the user.
 
+## ADR-11: Platform strategy — native on macOS, Windows, Linux
+
+**Status:** upheld — Arys, 2026-08-30 (native macOS+Windows+Linux confirmed; macOS-first order).
+
+**Context.** The owner decided 2026-08-30 to make Disk Janitor native on all three desktop
+OSes. The course context shaped it: the 9/1 comment deadline and 9/6 public demo run on this
+Mac, and the rubric has no cross-platform requirement — so this is an owner-driven ambition,
+not an imposed one, and it must not destabilize the demo lane. Research [09][10][11] established
+the feasibility basis: the judgment/reversibility architecture (evidence engine, quarantine +
+WAL restore, ledger, purge gate) carries over unchanged on all three — only the syscall
+substrate differs [11 §8]. Windows and Linux taxonomies are canonical ([09][10] mirror [03]),
+and every OS difference (atomic move, walker, durability, paths, dataless placeholders, trash)
+has a verified primitive [11 §1–7].
+
+**Decision.**
+
+- **Native on macOS, Windows, Linux** — one Rust crate, per-OS impls behind a single
+  abstraction layer: `platform/` per DESIGN §3.10, exposing the `AtomicMove` / `Walker` /
+  `VolumeInfo` / `DatalessCheck` traits with `#[cfg]`-gated impls per OS (macOS `renamex_np`;
+  Linux `renameat2` + fs probe; Windows `FileRenameInfoEx`) [SPEC §4][DESIGN §3.10][11 §7].
+  No emulation layer, no Electron/Python substrate — syscall-native on each OS [11].
+- **macOS-first implementation order** for the 9/1–9/6 deadlines: M1 lands the macOS
+  scan/classify core and dua-core walker; the `platform/` traits are sketched at M1 so M2 can
+  slot impls in without re-plumbing; Linux impls wire in at M2 (`renameat2`, mountinfo fstype
+  probe, `fsync(dirfd)` pair), Windows at M2+ (`FileRenameInfoEx`, `FlushFileBuffers`,
+  `FileIdBothDirInfo` bulk walk) [DESIGN §8][09][10][11].
+- **Guarantee table per OS, stated honestly** (SPEC §8 / DESIGN §5.5): macOS full atomicity
+  (`renamex_np(RENAME_EXCL)`); Linux atomic on ext4/btrfs/tmpfs/xfs and most fs ≥ 4.9 kernels,
+  NFS refuses `RENAME_NOREPLACE` (probe per volume, fall back or refuse); Windows no-clobber
+  apply is atomic via `FileRenameInfoEx` on Win10 ≥1607, restore replace is atomic on 1709+
+  and degrades to non-atomic-w.r.t.-open-targets `MoveFileExW` before, with **no dir-fsync —
+  NTFS journaling carries metadata durability (ADR-12)** [SPEC §8][11 §1/§2]. "What is NOT
+  promised is identical atomicity on every platform" — the deltas are documented, not hidden
+  [SPEC §8].
+
+**Consequences.**
+
+- Crate surface grows: per-OS cfg-gated additions (Windows `windows` 0.62.2 / `winreg` 0.56.0;
+  Linux `rustix` `renameat_with`/`syncfs`/`statx`; portable `same-file`, `dirs`, `filetime`)
+  — none affect the macOS build until M2 [DESIGN §2.4][11].
+- CI becomes a matrix (macOS + Linux at minimum; Windows at M2+) — the demo Mac is unaffected
+  either way.
+- Taxonomy triples: [03] macOS is joined by [09] Windows and [10] Linux as per-OS rule tables
+  behind the same evidence engine (ADR-8 amendment).
+- The 9/1–9/6 demo is unaffected: everything demoed runs the macOS path, which remains exactly
+  as designed in ADR-1/2/3.
+
+## ADR-12: Windows durability & restore semantics — WAL journal as restore authority
+
+**Status:** upheld — Arys, 2026-08-30 (runtime probe + honest guarantee tiers, incl. pre-1709 MoveFileExW fallback with clear messaging).
+
+**Context.** Windows lacks the primitives macOS's durability plan (ADR-3) leans on [11 §2]:
+there is no `F_FULLFSYNC` equivalent — `FlushFileBuffers` writes "all the buffered information
+for a specified file to the device" but its documented behavior is a cache→device write, not the
+platter-barrier request `F_FULLFSYNC` makes (and it requires a `GENERIC_WRITE` handle);
+`FILE_FLAG_WRITE_THROUGH` is the per-open alternative but "file system metadata is always
+cached"; volume-wide `FlushFileBuffers` is admin-only; and there is **no directory-fsync API at
+all** — the parent-dir-entry sync that closes POSIX's textbook gap (ADR-3) does not exist, with
+metadata durability riding the NTFS journal instead (documented weaker than `F_FULLFSYNC`).
+Separately, there was no POSIX rename before Win10 1709: `FileRenameInfoEx` appears in 1607
+headers, but POSIX_SEMANTICS (atomic replace with open handles staying valid) is usable from
+1709 per rust-lang#123985, while `[MS-FSCC]` states no minimum version — so the gate must be a
+runtime probe, never an assumption [09 risks #1][11 §1]. OS-side restore is not a fallback
+either: Recycle Bin restore is shell-mediated and our WAL already owns the
+`(original, quarantine)` pairs (ADR-2) [11 §2/§6].
+
+**Decision.**
+
+- **The WAL journal is the restore authority on Windows, not OS Trash.** Recovery replays the
+  recorded `(original_path, quarantine_path)` pairs exactly as on macOS; the shell Recycle Bin
+  (`IFileOperation`) is at most a purge-time handoff surface and never part of the restore path
+  [11 §2/§6][DESIGN §5.5].
+- **`FlushFileBuffers` is called at the same WAL state transitions as macOS `F_FULLFSYNC`**
+  (ADR-3): intent synced before mutation, result recorded after, `FILE_FLAG_WRITE_THROUGH` on
+  WAL opens; the missing directory-entry flush is compensated by ordering — the quarantine move
+  happens strictly after the intent record is flushed, so a crash between flush and move leaves
+  the journal describing no mutation, and post-move re-verification at recovery reconciles
+  observed state against recorded intents (ADR-4's roll-forward/drop-tail logic) [11 §2].
+- **Document the residual cases honestly** [11 §2/risks]: (a) NTFS metadata durability is
+  journal-backed, weaker than a platter barrier — the documented guarantee delta of §5.5; (b)
+  restore's replace step is atomic (old handles valid) only on Win10 1709+ via
+  `REPLACE_IF_EXISTS | POSIX_SEMANTICS`; on 1607–1708 it degrades to
+  `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, non-atomic w.r.t. open targets
+  (`ERROR_ACCESS_DENIED`/sharing violations) — restore correctness still holds because the WAL
+  is written first, and only concurrent-reader races surface as errors [11 §1][DESIGN §5.5];
+  (c) SMB shares have no POSIX rename semantics and are treated as external volumes [11 risks #2].
+
+**Consequences.**
+
+- Restore fidelity is identical across all three platforms because it is replay from the same
+  journal, not OS Trash semantics — the platform difference confines itself to *when* a crash
+  can lose the last in-flight mutation, never *whether* restore works [11 §2/§8].
+- The purge gate (ADR-10) is unchanged: Windows already refuses auto-apply on external/network
+  volumes, and the typed byte count is computed from the same hardlink-discounted
+  (`nNumberOfLinks`) totals [09 §0].
+- Windows support ships with the documented guarantee table (SPEC §8), not a silent promise of
+  macOS-grade atomicity [SPEC §8][DESIGN §5.5].
+
 ---
 
-*ADRs 1–10 accepted 2026-08-30, derived from research notes [03]–[08] and the tool-landscape
-note [02]; iterate alongside `docs/DESIGN.md` and `docs/SPEC.md` (course rule).*
+*ADRs 1–12 accepted 2026-08-30, derived from research notes [02]–[11] (09–11 behind the
+3-platform amendment); iterate alongside `docs/DESIGN.md` and `docs/SPEC.md` (course rule).*
+
+---
+*Verdicts recorded 2026-08-30 in a single review session: 9 upheld, 3 amended (ADR-1, ADR-2, ADR-8), 0 rejected, 0 contested. Amendments propagate into DESIGN §3.10, SPEC §7–8, crate-map §1f/§3 (landed same day).*
