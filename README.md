@@ -37,6 +37,7 @@ locations or black-box verdicts. Disk Janitor:
 | [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs with owner verdicts |
 | [`docs/crate-map.md`](docs/crate-map.md) | dependency plan (versions verified 2026-08) |
 | [`docs/ecosystem-survey.md`](docs/ecosystem-survey.md) | competitor analysis: copy/adapt/reject |
+| [`docs/decision-register.md`](docs/decision-register.md) | the 22 owner decisions behind the GUI pivot (08-31 grill) |
 | [`docs/research/`](docs/research/) | 13 primary-source research notes |
 
 ## Build (once implementation starts)
@@ -50,5 +51,5 @@ cargo tauri dev       # Tauri app (frontend; bun 1.3 present, npm/pnpm also work
 ## License / provenance
 
 Course submission — pushed to the Tsinghua Git server; LICENSE decision deferred
-until after grading (decision register D-07). AI-assisted development throughout;
+until after grading (decision register D-07, `docs/decision-register.md`). AI-assisted development throughout;
 conversation logs are a graded deliverable (per-milestone export, `docs/ai-logs/`).
