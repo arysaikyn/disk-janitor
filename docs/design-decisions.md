@@ -641,8 +641,8 @@ either: Recycle Bin restore is shell-mediated and our WAL already owns the
 
 ---
 
-*ADRs 1–12 accepted 2026-08-30, derived from research notes [02]–[11] (09–11 behind the
-3-platform amendment); iterate alongside `docs/DESIGN.md` and `docs/SPEC.md` (course rule).*
+*ADRs 1–12 verdict-stamped 2026-08-30 (9 upheld, 3 amended — see footer below), derived from
+research notes [02]–[11]; iterate alongside `docs/DESIGN.md` and `docs/SPEC.md` (course rule).*
 
 ---
 *Verdicts recorded 2026-08-30 in a single review session: 9 upheld, 3 amended (ADR-1, ADR-2, ADR-8), 0 rejected, 0 contested. Amendments propagate into DESIGN §3.10, SPEC §7–8, crate-map §1f/§3 (landed same day).*
