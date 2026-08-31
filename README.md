@@ -44,7 +44,7 @@ locations or black-box verdicts. Disk Janitor:
 ```bash
 cargo build          # Rust core (scan/classify/execute/ledger/agent)
 cargo test           # unit + integration (fixture trees only, never real user data)
-bun install && bun run dev   # Tauri app (frontend) — see docs/UX-SPEC.md
+cargo tauri dev       # Tauri app (frontend; bun 1.3 present, npm/pnpm also work) — docs/UX-SPEC.md
 ```
 
 ## License / provenance

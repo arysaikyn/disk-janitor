@@ -78,6 +78,15 @@ secondary). Zero telemetry. The full safety/UX contract lives in
 | 7 | [`ecosystem-survey.md`](ecosystem-survey.md) | competitors: what we copy, adapt, reject (16 tools) |
 | 8 | [`research/`](research/) | 13 primary-source notes backing every claim above |
 
+**How we got here.** Conceived 2026-08-27 from the course topic post; scaffold 08-30
+(agent files, spec); a 13-note verified research corpus and 12 technical ADRs landed
+08-30 (`7a91240`). On 08-30 the owner expanded scope to **native 3-platform** (notes
+09–11, ADR-11/12, `102fef2`). A 3-round grill on 08-31 surfaced 28 design gaps and
+produced 22 owner decisions — the pivotal one: **TUI → GUI-first Tauri desktop App**
+(UX-SPEC, ADR-5/13/14/16/17/18, `8308fcf`). Honesty-pass fixes landed same day
+(`abc23f2`, `88b8dbe`); this overview + entry-point sync is `f0fcaa6`. Implementation
+(M1) awaits the owner's go.
+
 ## Where we are (2026-08-31)
 
 | Phase | Status |
@@ -87,6 +96,7 @@ secondary). Zero telemetry. The full safety/UX contract lives in
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) · ⏳ visual mockups open |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |
 | Demo video + 9/10 presentation | ❌ not started (competitor research ready, note 13) |
+| **9/1 design comments** | ⏳ docs complete as of 2026-08-31 — owner review & submit **by 9/1** |
 
 ## Milestones & deadlines
 
