@@ -9,13 +9,17 @@
 
 ## 1. Positioning
 
-A developer-focused disk-cleanup **Agent**, native on macOS, Windows, and Linux. It answers
+A disk-cleanup **desktop App** (Tauri + Svelte; Rust core) — a real product first, native on
+macOS, Windows, and Linux. It answers
 the question `du` can't: not "where are the bytes?" but "**which of these are safe to reclaim,
 why, and how do I get them back if I'm wrong?**" (macOS design researched first [04][05];
 Windows/Linux taxonomies and cross-platform FS primitives in notes 09–11.)
 
-- Users: developers on capacity-starved machines (Arys: 16 GB MacBook 飘红常客;
-  classmates with 512 GB drives on 2-week cleaning cycles).
+- Users: everyone with a full disk — the GUI targets non-technical users first (no terminal
+  knowledge required [ADR-18]); first users are developers on capacity-starved machines
+  (Arys: 16 GB MacBook 飘红常客; classmates with 512 GB drives on 2-week cleaning cycles).
+  An embedded **propose-only agent** (intent → plan, never deletes, path-blind) is a core
+  differentiator over every surveyed tool [SPEC §3.3].
 - Boundary: it only services the disk-cleanup scenario. It is not a general file
   manager and not a generic chat wrapper.
 

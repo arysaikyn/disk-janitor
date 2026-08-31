@@ -33,13 +33,20 @@ Topic: 「还我磁盘 Disk Janitor」— a scenario-specialized macOS disk-clea
 - Check gate before yielding: `cargo fmt --check && cargo clippy -- -D warnings && cargo test`.
 - Modules mirror the spec: `classify/` (evidence engine), `plan/`, `execute/`
   (quarantine/restore), `ledger/` (JSONL), `policy/` (NL strategy compiler),
-  `ui/` (ratatui), `agent/` (LLM loop). One concept per file.
-- Chinese user-facing strings are fine (course audience is Chinese); keep identifiers
-  and comments in English.
+  `agent/` (LLM loop), `platform/` (per-OS traits), `ui/` (Tauri+Svelte app in
+  `app/`, thin CLI plumbing in the core bin). One concept per file.
+- UI is a Tauri + Svelte desktop App (ADR-5/18; `docs/UX-SPEC.md` governs) —
+  NOT a TUI; the TUI stack is shelved. Chinese-primary + English-secondary
+  bilingual labels (ADR-13); identifiers/comments in English.
 
 ## Course deliverables to keep green
+- Read `docs/OVERVIEW.md` first for the current vision/architecture/status;
+  it is the front door — keep it in sync when reality changes.
 
-- Design doc (`docs/DESIGN.md` eventually) must stay in sync with implementation.
+- Design docs (`docs/OVERVIEW.md`, `SPEC.md`, `DESIGN.md`, `UX-SPEC.md`,
+  `design-decisions.md`, `crate-map.md`) must stay in sync with implementation —
+  when code deviates from a doc, update the doc (or file an ADR) in the same
+  change. Course rule.
 - AI conversation logs are a graded deliverable — this session's transcript is part
   of that; keep timestamps and don't fabricate history.
 - R1–R6 are the grading rubric for 功能完整性 (30 pts). When implementing, map every

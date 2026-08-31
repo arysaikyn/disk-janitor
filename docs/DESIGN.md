@@ -8,7 +8,8 @@
 
 ## 1. Overview
 
-**Product claim.** Disk Janitor is a developer-focused disk-cleanup agent, native on macOS,
+**Product claim.** Disk Janitor is a disk-cleanup desktop App (Tauri + Svelte; propose-only
+agent embedded), native on macOS,
 Windows, and Linux, that answers the one question `du` can't: not "where are the bytes?" but
 "which of these are safe to reclaim, why, and how do I get them back if I'm wrong?" [SPEC §1].
 The macOS design was researched first ([02], [04], [05]); the Windows and Linux taxonomies
