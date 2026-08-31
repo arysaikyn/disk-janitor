@@ -1,14 +1,18 @@
 # Disk Janitor — Crate Map (Dependency Plan)
 
-Verified 2026-08-30. Every version/license claim cites a research note:
+Verified 2026-08-30 (core/lanes) and 2026-08-31 (GUI layer §1g, INFERENCE batch in §3).
+Every version/license claim cites a research note:
 [04] `docs/research/04-rust-walk-and-metadata-crates.md` · [05] `05-macos-fs-edge-cases.md` ·
 [06] `06-tui-stack-ratatui.md` · [07] `07-llm-agent-loop-rust.md` · [08]
 `08-ledger-wal-crash-safety.md` · [09] `09-windows-junk-taxonomy.md` · [10]
-`10-linux-junk-taxonomy.md` · [11] `11-cross-platform-primitives.md`.
+`10-linux-junk-taxonomy.md` · [11] `11-cross-platform-primitives.md` ·
+[12] `12-tauri-gui-stack.md` (GUI layer, §1g) · [13]
+`13-disk-tool-product-presentation.md` (product-presentation patterns; cited in §1g notes only).
 [01] (`01-oss-disk-analyzers.md`) and [02] (`02-macos-cleanup-landscape.md`) are cited only for
 supplementary facts (dust config precedent; Commons Clause license caveat; serde licensing).
+[03] (`03-dev-junk-taxonomy.md`) grounds rule-data provenance in §1 commentary.
 Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy / agent / ui / config
-/ platform (§1f — per-OS gated dependencies from notes 09–11).
+/ platform (§1f — per-OS gated dependencies from notes 09–11) / gui (§1g — Tauri + Svelte, ADR-5/18).
 
 ## 1. Crates table
 
@@ -298,4 +302,4 @@ llm = ["dep:tokio", "dep:reqwest", "dep:async-openai", "dep:tiktoken-rs", "dep:b
 | fs4 1.1.0 | fork-of-fs2 lineage; sync feature MSRV 1.75 | Pin 1.1.0; verify MSRV fits toolchain [08] |
 | nix 0.31.3 | 0.x line; API surface (fcntl enums, Flock) stable-ish but 0.x | Pin 0.31.3 [05][08] |
 | tempfile 3.27.0 | persist semantics changed at 3.18.0 (renameat_with on Apple) | Pin ≥3.27.0; re-verify docs caveat (no fsync) on upgrade [08] |
-| General pinning advice | Any crate could publish tomorrow | For young/churning crates (dua-core, sysinfo, indicatif, reqwest, async-openai) pin EXACT versions in Cargo.toml and let only deliberate upgrades move them; for ultra-stable lines (serde 1.x, libc 0.2.x, crossbeam-channel 0.5.x, globset 0.4.x, walkdir 2.x) caret ranges are acceptable [04][07][08]. Commit Cargo.lock; re-verify pinned versions against crates.io API the day Cargo.toml lands (all claims here verified 2026-08-30 [04][05][06][07][08]) |
+| General pinning advice | Any crate could publish tomorrow | For young/churning crates (dua-core, sysinfo, indicatif, reqwest, async-openai) pin EXACT versions in Cargo.toml and let only deliberate upgrades move them; for ultra-stable lines (serde 1.x, libc 0.2.x, crossbeam-channel 0.5.x, globset 0.4.x, walkdir 2.x) caret ranges are acceptable [04][07][08]. Commit Cargo.lock; re-verify pinned versions against crates.io API the day Cargo.toml lands (all claims here verified 2026-08-30 [04]–[08], 2026-08-31 [09]–[13] + §3 INFERENCE batch) |
