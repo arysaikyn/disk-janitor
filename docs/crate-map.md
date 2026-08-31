@@ -44,13 +44,13 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 
 ### 1c. TUI stack (feature `tui`)
 
-| Crate | Ver (2026-08) | License | Purpose / verdict | Feature flags | Module | Alternatives |
-|---|---|---|---|---|---|---|
-| ratatui | 0.30.2 (2026-06-19) [06] | MIT [06] | widget/diffed-render library; umbrella crate re-exporting ratatui-core 0.1.2 + ratatui-widgets 0.3.2 (workspace-split since 0.30) [06] | `crossterm` default backend [06] | ui | cursive (ncurses; heavier) [06] |
-| crossterm | 0.29.0 [06] | MIT [06] | raw mode, alt screen, events, SIGWINCH→Resize; MUST pin "0.29" — ratatui 0.30 hard-depends on it (non-optional); two majors in one tree = lost events / broken raw-mode restore [06] | `event-stream` opt-in (not needed; threads+channels) [06] | ui | termion 4.0.6 (MIT, Unix-only; no poll/timeout, no Resize events) [06] |
-| unicode-width | 0.2.2 [06] | MIT OR Apache-2.0 [06] | correct cell widths for CJK/emoji filenames (Chinese paths render); column alignment + truncation via `UnicodeWidthStr::width()`; dua pulls 0.2 under its tui feature [06] | — | ui | unicode-segmentation 1.13.3 (grapheme clustering; needed too if truncating mid-cluster) [06] |
-| signal-hook | 0.4.4 [06] | MIT OR Apache-2.0 [06] | real SIGINT/SIGTERM/SIGTSTP routing (belt-and-braces cancel path); crossterm itself depends on 0.3.17 for SIGWINCH [06] | mio integration optional [06] | ui, execute | `libc::sigaction` directly (unsafe, easy to get wrong) [06] |
-| indicatif | 0.18.6 [04][06] | MIT [04][06] | progress bars for NON-TUI CLI mode only (plan/apply/purge subcommands); draws to stderr, max 20 refreshes/s, `abandon_with_message` on cancel; NEVER inside the ratatui loop [04][06] | — | ui (cli mode), plan | hand-rolled `\r`-updates [06]; ratatui `Gauge`/`LineGauge` in TUI [06] |
+| Crate | Ver (2026-08) | License | Purpose / verdict | Feature flags | Module | Alternatives | Notes |
+|---|---|---|---|---|---|---|---|
+| ratatui | 0.30.2 (2026-06-19) [06] | MIT [06] | widget/diffed-render library; umbrella crate re-exporting ratatui-core 0.1.2 + ratatui-widgets 0.3.2 (workspace-split since 0.30) [06] | `crossterm` default backend [06] | ui | cursive (ncurses; heavier) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
+| crossterm | 0.29.0 [06] | MIT [06] | raw mode, alt screen, events, SIGWINCH→Resize; MUST pin "0.29" — ratatui 0.30 hard-depends on it (non-optional); two majors in one tree = lost events / broken raw-mode restore [06] | `event-stream` opt-in (not needed; threads+channels) [06] | ui | termion 4.0.6 (MIT, Unix-only; no poll/timeout, no Resize events) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
+| unicode-width | 0.2.2 [06] | MIT OR Apache-2.0 [06] | correct cell widths for CJK/emoji filenames (Chinese paths render); column alignment + truncation via `UnicodeWidthStr::width()`; dua pulls 0.2 under its tui feature [06] | — | ui | unicode-segmentation 1.13.3 (grapheme clustering; needed too if truncating mid-cluster) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
+| signal-hook | 0.4.4 [06] | MIT OR Apache-2.0 [06] | real SIGINT/SIGTERM/SIGTSTP routing (belt-and-braces cancel path); crossterm itself depends on 0.3.17 for SIGWINCH [06] | mio integration optional [06] | ui, execute | `libc::sigaction` directly (unsafe, easy to get wrong) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
+| indicatif | 0.18.6 [04][06] | MIT [04][06] | progress bars for NON-TUI CLI mode only (plan/apply/purge subcommands); draws to stderr, max 20 refreshes/s, `abandon_with_message` on cancel; NEVER inside the ratatui loop [04][06] | — | ui (cli mode), plan | hand-rolled `\r`-updates [06]; ratatui `Gauge`/`LineGauge` in TUI [06] | retained — headless CLI progress (D-08 CLI subset kept; ADR-5/18 pivot) |
 
 ### 1d. Agent / LLM stack (feature `llm`)
 
@@ -123,6 +123,37 @@ not re-verified).
 | `trash` | 5.2.6 [05][11] | MIT [05][11] | OS trash per backend: macOS `NSFileManager`/Finder (delete-only), Windows `IFileOperation`, Linux FreeDesktop (`.trashinfo` replay via `os_limited::restore_all`) | crate msrv 1.85 [11]; FreeDesktop cross-topdir fallback = non-atomic copy+delete ⇒ never our restore path [11 §6/risks]; Linux getmntent UB note — pin calls to one thread [11 risks #4] |
 | `dirs` | 6.0.0 [11] | MIT OR Apache-2.0 [11] | per-OS roots: `cache_dir` = `$XDG_CACHE_HOME|$HOME/.cache` / `{FOLDERID_LocalAppData}` / `~/Library/Caches` | `runtime_dir`/`executable_dir` are Linux-only (return `None` elsewhere) — gate by `Option` [11 §7] |
 
+### 1g. GUI layer (Tauri + Svelte) — ADR-5/18 pivot
+
+All Rust GUI host crates live in `src-tauri/Cargo.toml`, NOT the core workspace — they are
+built as a separate Tauri app crate and pulled in via `tauri`'s own dependency graph (see §3
+comment). Frontend packages are npm-managed (no Cargo involvement). Owning module: `ui/`.
+Versions/licenses verified 2026-08-31 at crates.io / npm registry [12].
+
+| Crate | Ver (2026-08-31) | License | Purpose / verdict | Feature flags | Notes |
+|---|---|---|---|---|---|
+| `tauri` | 2.11.5 [12] | Apache-2.0 OR MIT [12] | Rust app shell: `#[tauri::command]` (UI→Rust, typed via serde), event system (Rust→UI), `ipc::Channel<T>` (ordered streaming — scan/classify progress); `tauri::State` for a managed `ScanRegistry`; permissioned capabilities in `src-tauri/capabilities/*.json` (deny-by-default) [12] | `tray-icon` for menubar mode [12] | newest stable; all `tauri`-family crates Apache-2.0 OR MIT [12] |
+| `wry` | 0.56.1 [12] | Apache-2.0 OR MIT [12] | system webview host (macOS WKWebView / Windows WebView2 / Linux WebKitGTK) — pulled transitively by `tauri` [12] | — | webview fragmentation risk per-OS [12 risks #1] |
+| `tao` | 0.37.0 [12] | Apache-2.0 [12] | window/event abstraction under Tauri (traffic lights, resize, theme change) [12] | — | pulled transitively by `tauri` [12] |
+| `tauri-plugin-dialog` | 2.7.3 [12] | Apache-2.0 OR MIT [12] | native open/save/message dialogs (sheet-style on macOS); used for volume pickers + confirmations, NOT scan I/O [12] | — | scan/apply/purge I/O stays in Rust commands (D-02/D-08) [12] |
+| `tauri-plugin-fs` | 2.5.2 [12] | Apache-2.0 OR MIT [12] | scoped app-config fs for JS only (capability path-scope system); coarse volume-wide writes kept out of the webview [12] | — | decision: all scan/classify/plan/apply/purge I/O via Rust commands — preserves WAL + typed byte-count correctness [12] |
+| `window-vibrancy` | 0.8.0 [12] | Apache-2.0 OR MIT [12] | macOS `apply_vibrancy` (NSVisualEffectMaterial, 10.10+) / macOS 26 `apply_liquid_glass` / Windows 11 Mica + 10 Acrylic; cfg-gated per OS [12] | — | requires `transparent: true` **and** `macOSPrivateApi: true`; private APIs block App Store acceptance (fine for direct-DMG; Linux unsupported — compositor-controlled) [12 risks #3] |
+
+Frontend (npm, owning module `ui/`) — versions/licenses per note [12]:
+
+| Package | Ver (2026-08-31) | License | Purpose |
+|---|---|---|---|
+| `svelte` | 5.57.0 [12] | MIT [12] | UI framework (runes: `$state`/`$derived`/`$effect`); compiles away, no VDOM — appends thousands of list rows/sec cheaply; compiler a11y warnings as CI errors [12] |
+| `svelte-i18n` | 4.0.1 [12] | MIT [12] | CN-primary + EN-secondary labels (D-02/D-12); `$_('key')`, `init({ fallbackLocale })`, JSON locales in `src/lib/i18n/zh-CN.json` + `en.json` [12] |
+| `typescript` | 7.0.2 [12] | Apache-2.0 [12] | type checking; TS major line 7 now on npm [12] |
+| `@tauri-apps/api` | 2.11.1 [12] | Apache-2.0 OR MIT [12] | `invoke`/`Channel`/`event`/`window`/`menu`/`tray` from the frontend; framework-agnostic [12] |
+| `@tauri-apps/cli` | 2.11.4 [12] | Apache-2.0 OR MIT [12] | dev/build/bundle CLI (`tauri build --bundles dmg\|msi\|appimage`) [12] |
+
+> Supersedes the shelved TUI stack (§1c) per ADR-5/18 (D-09/D-10/D-11). ratatui/crossterm/
+> unicode-width/signal-hook rows above are retained for history + ADR traceability, struck as
+> shelved; `indicatif` stays (headless CLI subset, D-08). Rust core is unchanged (R1): the GUI
+> layer is a pure presentation host over the same scan/classify/plan/execute/ledger/policy core.
+
 ## 2. Pitfalls table
 
 | Pitfall | Detail | Source |
@@ -187,6 +218,7 @@ crossterm = { version = "0.29", optional = true } # [06] MUST match ratatui's ha
 unicode-width = { version = "0.2.2", optional = true } # [06] CJK/emoji cell widths
 signal-hook = { version = "0.4.4", optional = true }   # [06] SIGINT/SIGTERM/SIGTSTP
 indicatif = { version = "0.18.6", optional = true }    # [04][06] headless CLI progress ONLY
+# --- GUI (Tauri 2.11.5) lives in src-tauri/Cargo.toml, not this core workspace — see §1g (ADR-5/18) ---
 
 # --- LLM agent loop (feature "llm") ---
 tokio = { version = "1.53.1", optional = true, features = ["rt-multi-thread", "macros", "sync"] } # [07]

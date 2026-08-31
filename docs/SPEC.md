@@ -68,23 +68,23 @@ wrong?") are 99% of cleanup work; no existing tool owns either end-to-end.**
   policy/    NL → structured constraints (local rules; optional LLM)
   agent/     agent loop: model ↔ tools (scan/classify/plan/apply), stop conditions,
              token budget enforcement
-  ui/        ratatui TUI: evidence review, progress, ledger trajectory
+  ui/        Tauri + Svelte desktop App (UX-SPEC.md): evidence review, progress,
+             ledger trajectory; thin CLI subset as plumbing
   config/    config.toml: endpoint, key, model, context length, thinking mode,
              API prices, budget
 ```
 
 Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidence> }`,
-`Evidence { kind, detail, strength }`, `PlanEntry`, `LedgerRecord`, `WalEntry`.
 
 ## 5. R1–R6 mapping (功能完整性, 30 pts)
 
 | Req | Implementation |
 |---|---|
 | R1 Rust core | all of the above; syscall layer via `nix`/`libc` |
-| R2 UI | ratatui interactive TUI (CLI subcommands as fallback) |
-| R3 model config | `config.toml` + TUI settings: endpoint, key, model, ctx len, thinking, prices |
-| R4 progress + interrupt | live scan/classify progress bars; ctrl-c safe (WAL-consistent) |
-| R5 context/history | JSONL ledger + session save/load; agent-loop trajectory visible in TUI |
+| R2 UI | Tauri + Svelte 桌面 App (course R2 permits 桌面 App; UX-SPEC.md); thin CLI plumbing |
+| R3 model config | `config.toml` + App settings pane: endpoint, key, model, ctx len, thinking, prices |
+| R4 progress + interrupt | live scan/classify progress (ipc::Channel); interrupt-safe (WAL-consistent; apply auto-resumes, purge runs to completion) |
+| R5 context/history | JSONL ledger + session save/load; agent-loop trajectory visible in App (Ledger screen) |
 | R6 tokens & cost | per-call usage captured → running cost at configured prices; budget ⇒ interrupt |
 
 ## 6. Milestones (course deadlines: 9/1 comments, 9/6 public demo, 9/8 tryouts, 9/10 presentation)
@@ -92,7 +92,7 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 - M0 scaffold — repo, agent files, spec (this commit).
 - M1 scan + classify core w/ fixture-tree tests.
 - M2 plan/apply/purge/restore + WAL + ledger.
-- M3 TUI (evidence review, progress, interrupt).
+- M3 GUI shell per UX-SPEC.md (Tauri + Svelte): evidence review, progress, interrupt.
 - M4 agent loop + NL policy compiler + token accounting.
 - M5 demo script, README polish, design doc final, AI-log export, 开销明细表.
 

@@ -45,6 +45,9 @@ JSONL ledger, and an optional LLM that compiles intent into policy and never see
    [03 §6, §8-risks; 05 §6]; freed-space reports account for Time-Machine snapshot pinning
    [02 §3]; and the LLM layer is *architecturally* unable to see paths — enforcement lives in
    one serializer chokepoint plus a CI leak test, not in prompt discipline [07 §privacy].
+4. *Non-functional floor (D-13/D-14).* Scan sustains ≥1 GiB/s metadata-only on M1 Pro — a
+   home-dir scan completes in <2 min and is bench-gated in CI; the whole process stays
+   under a 500 MB RSS ceiling, asserted against a 1M-entry synthetic fixture.
 
 ## 2. System architecture
 
@@ -419,51 +422,21 @@ Crates: async-openai 0.41.3 (typed types, `with_api_base` for DeepSeek/OpenRoute
 built-in `SimpleRetryPolicy` 429/5xx + `Retry-After`), tokio (`rt-multi-thread` confined to
 this thread), tiktoken-rs 0.12 (preflight only), serde_json [07 §rec].
 
-### 3.8 `ui/` — ratatui TUI + CLI fallback
+### 3.8 `ui/` — GUI shell (UX-SPEC) + CLI fallback
 
-Responsibility: ratatui TUI — evidence review, progress, plan, apply/purge gates, ledger
-trajectory, settings. CLI subcommands as fallback (indicatif on stderr, never inside the TUI
-loop [06 §4]).
+Responsibility: superseded by the GUI pivot — the product UI is now a Tauri + Svelte
+desktop App specified in `docs/UX-SPEC.md` and ADR-18 (TUI shelved; ADR-5 amended); the
+Rust core modules (§3.1–3.7, §3.9–3.10) are unchanged. The architecture contract that
+survives the pivot:
 
-Loop shape [06 §5 synthesis]:
-
-1. UI thread owns `Terminal + AppState`; `terminal.draw` then `crossbeam::select!` over
-   `input_rx`/`scan_rx`/`cand_rx`/`exec_rx`/`agent_rx`/`tick_rx`; redraw per event (diffs are
-   cheap) + 100 ms tick while a long task runs (ncdu/gdu cadence).
-2. Input thread: `crossterm::event::read()` → `bounded(32)` (dua's exact pattern).
-3. Workers never touch ratatui — they send events (gdu's `QueueUpdateDraw` discipline).
-4. Ctrl-C = cancel current task, not quit: raw mode ⇒ `cfmakeraw` clears ISIG ⇒ Ctrl-C arrives
-   as a key event [06 §2]; if a task is active → set cancel flag + "Stopping…" (gdu keeps
-   partial results); double-Ctrl-C or idle → quit; `signal-hook` routes real SIGINT/SIGTERM
-   into the same path; a panic hook calls `ratatui::restore()` [06 risks].
-5. Every exit path flushes WAL/ledger first (R4 crash-consistency) [06 §5].
-6. `KeyEventKind::Press` guard; `unicode-width` (+segmentation) for CJK path columns [06 §crates].
-
-Screens & gates:
-
-| Screen | Content / gate |
-|---|---|
-| Dashboard | volumes (raw free vs important-usage free, labeled [02 risks #1]), snapshot list, running cost |
-| Review | virtualized candidate table (`StatefulWidget` windows; rebuild `ListItem`s per draw, O(visible) [06 §3]); re-select by stable path key when the list reorders mid-scan (dua) [06 §3]; evidence panel per candidate |
-| Plan | manifest summary + refusals + prune dry-runs |
-| Apply | progress + per-entry `Applied` events |
-| Purge modal | type the exact allocated byte count; mismatch refuses |
-| Ledger | trajectory from ledger records |
-| Settings | `config.toml` fields (R3) |
-| Agent | trajectory lines + token/cost footer |
-
-```rust
-pub enum UiCmd { StartScan(ScanOptions), BuildPlan(PolicyConstraints), ConfirmPurge(u64),
-                 Restore(WalOpId), Cancel, Quit }
-pub enum UiEvent { Key(KeyEvent), Resize(u16, u16), Scan(ScanEvent), Cand(Candidate),
-                   Exec(ExecEvent), Agent(AgentEvent), Tick }
-pub fn run(rx: Receiver<UiEvent>, cmd_tx: Sender<UiCmd>, cfg: Config) -> Result<Exit>;
-```
-
-Crates: ratatui 0.30.2 + crossterm 0.29 pinned together — two crossterm majors in one tree keep
-separate event queues, lose events, and may not restore raw mode [06 §1]; unicode-width 0.2.2;
-unicode-segmentation; crossbeam-channel; signal-hook 0.4.4; indicatif (CLI only); ratatui
-`TestBackend` for snapshot tests [06 §rec].
+- **UI thread model (§2.1)** → the Tauri main process replaces the ratatui UI thread as
+  the event consumer; the scan/classify/exec/agent core threads and the
+  no-async-outside-the-agent-thread rule are unchanged.
+- **Channels (§2.2)** → progress streams cross the webview boundary via
+  `tauri::ipc::Channel<T>` (bootstrap-then-stream, UX-SPEC §2.3); crossbeam-channel
+  inside the core is unchanged.
+- **Thin CLI subset (ADR-14)** → `scan --json` / `plan` / `restore` / interactive purge
+  remains the automation surface for CI and agent plumbing (purge never gets `--yes`, P4).
 
 ### 3.9 `config/` — `config.toml` + env fallback
 
@@ -683,6 +656,24 @@ weaker and the delta is documented, not hidden [09 §delta][11 §1/§2]:
 - Same guarantee-shaping rules as macOS apply: cross-volume moves are refused at plan;
   network shares (SMB has no POSIX rename semantics) are treated as external volumes [11 risks #2].
 
+### 5.6 Interrupt semantics + uninstall + format versioning
+
+**Interrupt semantics (D-15).** A scan/classify interrupt drops incomplete batches —
+completed batches are kept, and the UI says exactly that, never a fake "scan complete"
+(P6). An interrupted `apply` is WAL-auto-resumed at the next launch (§5.2 recovery rolls
+forward committed intents). Once confirmed, `purge` runs to completion: its entries are
+independent, so there is no mid-purge stop — interruption is not offered at that gate.
+
+**Uninstall contract (ADR-16, D-17).** Uninstall requires restore-or-explicit-confirm of
+every surviving quarantine across all volumes before any state removal — 恢复是权利 holds
+to the end; orphaned per-volume quarantine dirs (no matching WAL) are surfaced for manual
+resolution, never silently deleted.
+
+**Data-format versioning (ADR-17, D-18).** Ledger / WAL / manifest format v1 is frozen
+through the course; replay is forward-compatible — unknown record kinds and unknown
+fields are skipped **and counted** (`skipped_unknown=N`), `deny_unknown_fields` stays
+OFF, and post-course schema changes only via version-gated, logged migration passes.
+
 ## 6. Key type definitions
 
 Rust-ish pseudocode. Field lists are the contract; method bodies elided.
@@ -785,6 +776,7 @@ Invariants worth testing:
 | TUI | ratatui `TestBackend` snapshot tests per screen [06 §rec]; input-channel drop ⇒ scan cancel+join (dua semantics) [04 §progress]; the purge modal rejects a mismatched byte string. |
 | Scanner edge cases | firmlink walk of `/` (no double-walk of the Data side) [04 §4]; an iCloud-shaped tree scanned with materialization OFF (no downloads — assert no content reads via unchanged mtime/size); a mounted volume appearing mid-tree (`st_dev` reject in `descend`). |
 | Agent | sans-IO `RunState` serde round-trip + resume; a stub OpenAI-compatible HTTP server (e.g. wiremock) covering: malformed `arguments` JSON (repair path), DeepSeek `reasoning_content` echo shape, OpenRouter final usage-chunk deviation, Ollama id-less tool calls, missing final usage chunk (estimate marked unverified, not billed) [07 §providers, risks]; leak-test regexes on every outbound message [07 §privacy 5]. |
+| NFR (D-13/D-14) | criterion-style bench: ≥1 GiB/s metadata-only scan on M1 Pro, home dir <2 min — CI-gated on the macOS runner; memory-ceiling fixture: 1M synthetic entries assert RSS < 500 MB. |
 
 ## 8. Build sequencing
 
@@ -799,9 +791,9 @@ land on this Mac; the `platform/` traits (§3.10) are sketched at M1 so M2 can s
 without re-plumbing, but only the macOS impl is exercised until M2 [09][10][11].
 
 | **M2** plan / apply / purge / restore + WAL + ledger | `plan/`, `execute/`, `ledger/` | `renamex_np` layer + capability probe; per-volume quarantine + per-volume WAL; record framing (crc32fast envelope); flock; `recover()`; plan builder + manifest write/load; CLI `plan/apply/purge/restore`; crash-injection harness (`KILL_AT`). **Platform: M2 wires the trait impls for Linux** — `AtomicMove` via `renameat2(RENAME_NOREPLACE)` + per-volume fstype probe (`/proc/self/mountinfo`), fsync(file)+fsync(dirfd) durability pair, XDG cache roots, `requires-elevation` refusal class [10 §0/delta][11 §1] | CLI round trip incl. `kill -9` recovery passes |
-| **M3** TUI | `ui/` | ratatui + crossterm (pinned) shell; event loop per §3.8; Dashboard/Review/Plan/Apply screens; purge modal; Ctrl-C semantics; settings pane v0. **Platform: M3 keeps Windows on the portable baseline** — `ignore::WalkParallel` walker, std path resolution; no Windows-specific UI work [11 §5] | full flow usable in TUI (9/6 demo) |
+| **M3** GUI shell | `ui/` | GUI shell per UX-SPEC.md (Tauri+Svelte) [12]: Tauri 2.11.5 shell + Svelte 5.57 app; named commands + `ipc::Channel` progress streams per §3.8; Dashboard/Review/Plan/Apply screens per UX-SPEC §3; purge gate modal; settings sheet v0. **Platform: M3 keeps Windows on the portable baseline** — `ignore::WalkParallel` walker, std path resolution; no Windows-specific UI work [11 §5] | full flow usable in the GUI (9/6 demo) |
 | **M4** agent + NL policy + token/cost | `agent/`, `policy/`, `config/` | `config.toml` full (R3); NL policy compiler v1; sans-IO `AgentRun` + 6 tools + chokepoint + leak test; usage/cost accounting + budget interrupt; trajectory screen. **Platform: M4 keeps Windows on the portable baseline** (same as M3); Windows `AtomicMove`/`VolumeInfo` impls (`FileRenameInfoEx`, `dwVolumeSerialNumber`, junction rules) land behind `#[cfg(windows)]` only when CI can exercise them [09 §delta][11 §1/§4] | "腾出 25GB" runs end-to-end under budget |
-| **M5** polish | docs, demo, hardening | demo script; README; DESIGN.md final sync; AI-log export; 开销明细表 generated from ledger `budget` recs; threshold tuning (SPEC §7); edge-case hardening list from §7 | 9/10 presentation |
+| **M5** polish | docs, demo, hardening | demo = product video (Screen Studio/Hyperframes) + live preview (D-21/D-22); AI-log per-milestone export to `docs/ai-logs/M<N>-<date>.md` (D-19); 开销明细表 with standard columns (date / model / calls / prompt+completion tokens / cost USD+CNY) generated from ledger `budget` recs, budget-rec `model` field per D-20; README; DESIGN.md final sync; threshold tuning (SPEC §7); edge-case hardening list from §7 | 9/10 presentation |
 
 Dependency notes:
 

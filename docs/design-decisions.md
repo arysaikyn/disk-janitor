@@ -19,6 +19,12 @@
 - ADR-10 Grace window & purge confirmation: typed allocated byte count, 72 h restore
 - ADR-11 Platform strategy — native on macOS, Windows, Linux (`platform/` abstraction, macOS-first order, honest per-OS guarantee table)
 - ADR-12 Windows durability & restore semantics — WAL journal as restore authority, FlushFileBuffers at state transitions
+- ADR-13 Bilingual UI — CN primary + EN secondary (svelte-i18n central catalog; CN for persuasion, EN for identifiers/terms)
+- ADR-14 CLI surface contract — thin subset (scan --json, plan, restore, interactive purge) for CI/tests/agents; purge never gains a --yes bypass (P4)
+- (ADR-15 number reserved — unused; ADR-16..18 continue the 2026-08-31 session series)
+- ADR-16 Uninstall contract — restore-or-explicit-confirm every surviving quarantine across volumes before state removal; orphaned-quarantine warning at startup
+- ADR-17 Data format versioning — ledger/WAL/manifest v1 frozen through the course; forward-compat replay (unknown skipped + counted, deny_unknown_fields OFF)
+- ADR-18 GUI paradigm — Tauri + Svelte desktop App (GUI-first per D-10; Rust core unchanged; UX-SPEC.md governs UI; ADR-5 TUI shelved)
 
 ## ADR-1: Walker — dua-core 3.3.0 over jwalk and ignore
 
@@ -232,7 +238,7 @@ volume as the quarantine it describes [08 risks #3].
 
 ## ADR-5: TUI stack — ratatui + crossterm pinned, threads + crossbeam, indicatif CLI-only
 
-**Status:** upheld — Arys, 2026-08-30 (scope: demo-trim pending separate M3 planning; stack unchanged).
+**Status:** amended 2026-08-31 — Arys pivoted to GUI-first desktop App (Tauri + Svelte); TUI shelved (see ADR-18).
 
 **Context.** R2 requires an interactive TUI with CLI subcommands as fallback; R4 requires
 live progress and ctrl-c-safe interrupt. [06] distilled four reference TUIs (dua-cli, gitui,
@@ -279,6 +285,14 @@ use it interactively [06 §4][04].
 - `KeyEventKind::Press` filtering is kept even though macOS only emits Press (portability,
   no double-fires later) [06 risks].
 - ratatui `TestBackend` gives snapshot tests per screen [06 §rec].
+
+**Amended 2026-08-31 (GUI pivot):** Tauri 2.11.5 + wry 0.56.1 + tao 0.37.0 + Svelte 5.57
+replace ratatui/crossterm as the UI layer — all Apache-2.0 OR MIT, verified in [12]; the
+ratatui/crossterm decision above is retained as the record of the shelved TUI path. Scan/
+apply progress reaches the frontend via `tauri::ipc::Channel` (not terminal redraws);
+indicatif 0.18.6 stays CLI-only in the thin subset (ADR-14); window-vibrancy 0.8.0 supplies
+the Apple-native material feel the owner demanded (D-10, D-11). The full pivot rationale
+lives in ADR-18.
 
 ## ADR-6: Agent-loop HTTP stack — async-openai 0.41.3, sans-IO loop, reqwest rustls
 
@@ -588,6 +602,13 @@ has a verified primitive [11 §1–7].
 - The 9/1–9/6 demo is unaffected: everything demoed runs the macOS path, which remains exactly
   as designed in ADR-1/2/3.
 
+**Amended 2026-08-31 (GUI pivot):** the platform strategy is unchanged by the pivot to a
+GUI-first desktop App (ADR-18) — Tauri **is** the cross-platform UI: one Svelte frontend
+over one Rust core, with per-OS native depth still coming from the `platform/` abstraction
+(DESIGN §3.10). The `AtomicMove` / `Walker` / `VolumeInfo` traits and their per-OS impls
+(ADR-1/ADR-2 amendments, ADR-12) are untouched; macOS-first order and the honest per-OS
+guarantee table (SPEC §8) stand as written (D-11).
+
 ## ADR-12: Windows durability & restore semantics — WAL journal as restore authority
 
 **Status:** upheld — Arys, 2026-08-30 (runtime probe + honest guarantee tiers, incl. pre-1709 MoveFileExW fallback with clear messaging).
@@ -638,6 +659,165 @@ either: Recycle Bin restore is shell-mediated and our WAL already owns the
   (`nNumberOfLinks`) totals [09 §0].
 - Windows support ships with the documented guarantee table (SPEC §8), not a silent promise of
   macOS-grade atomicity [SPEC §8][DESIGN §5.5].
+
+## ADR-13: Bilingual UI — CN primary + EN secondary
+
+**Status:** accepted 2026-08-31 (owner-confirmed).
+
+**Context.** The owner chose bilingual labels with **Chinese primary, English secondary**
+ (D-02, D-12). Chinese carries the persuasion — the trust-building copy, the refusal voice
+ (P1: 拒绝+证据+替代), the brand invariants (恢复是权利, D-17) — while English serves
+ identifiers and technical terms the audience already knows (`Quarantine`, `WAL`,
+ `DerivedData`). Half-bilingual UIs fail by omission: a single untranslated error string
+ breaks the promise at exactly the moment trust matters most.
+
+**Decision.**
+
+- **Central string catalog** via `svelte-i18n 4.0.1` [12] — no hardcoded user-facing
+  strings in Svelte components; every key has CN + EN from day one.
+- **CN for persuasion, EN for identifiers/terms** (D-12): prose, buttons, refusals,
+  evidence labels are Chinese-primary with English secondary; command names, crate terms,
+  file formats, and grade identifiers stay English.
+- Every user-facing string is bilingual **from day one** — including errors, empty states,
+  and the uninstall flow (ADR-16); a missing translation is a build/lint failure, not a
+  runtime fallback to hardcoded text.
+- The catalog lives with the frontend (crate-map §1g); UX-SPEC.md (ADR-18) owns the copy.
+
+**Consequences.**
+
+- Refusals, evidence chains, and the purge gate speak the user's language at the trust
+  boundary (P1, P6) — the strings are part of the safety surface, reviewed like code.
+- Adding a locale later is additive catalog work, not a refactor; the component convention
+  (keys only) is already enforced.
+- Ledger/WAL records stay locale-neutral: stored copy is identifiers + data, UI-localized
+  at render (consistent with ADR-4's replay-first design).
+
+## ADR-14: CLI surface contract — thin subset beside a GUI-primary product
+
+**Status:** accepted 2026-08-31 (owner-confirmed).
+
+**Context.** The product is GUI-primary (D-10, ADR-18), but a CLI subset earns its keep as
+infrastructure: CI harnesses, crash-injection tests, and agent plumbing (D-08). The risk is
+scope creep — a full CLI becomes a second product to keep consistent with the GUI, and a
+convenience flag on `purge` would betray P4.
+
+**Decision.**
+
+- The CLI is a **thin subset** (D-08): `scan --json` (machine-readable output for CI and
+  agent tooling), `plan` (review a plan manifest), `restore` (WAL replay), and `interactive
+  purge` (the ADR-10 typed-byte-count gate in the terminal). Nothing more.
+- **`purge` NEVER gains a `--yes`/flag bypass** (P4) — the interactive gate is the product;
+  any "scriptable purge" request is refused by design.
+- CLI flags are plumbing, not surface: they exercise the same Rust core the GUI calls;
+  behaviors diverge only in rendering, never in safety semantics.
+- Packaging/distribution work (D-16) targets GUI installers; the CLI ships inside the same
+  binary, not as a separate artifact.
+
+**Consequences.**
+
+- CI and crash-injection tests drive the product exactly as a user would (P7), through the
+  same commands and gates — no test-only backdoors.
+- The CLI stays reviewable in one screenful; feature parity questions are closed by policy,
+  not renegotiated per milestone.
+- AGENTS/agent integrations (D-08 plumbing use) depend only on the four commands, a stable
+  contract smaller than the GUI's.
+
+## ADR-16: Uninstall contract — restore-or-confirm before state removal
+
+**Status:** accepted 2026-08-31 (owner-confirmed).
+
+**Context.** The brand invariant is 恢复是权利 — restore is a right (D-17). Quarantine roots
+live on user volumes (ADR-2), while app state lives in `~/.disk-janitor/` (ADR-4); deleting
+the app without reconciling the two would strand quarantined files whose only undo metadata
+is the WAL — the exact trap Apple's undocumented Trash Put-Back format creates [05 §7],
+which this product exists to avoid.
+
+**Decision.**
+
+- **Uninstall requires restore-or-explicit-confirm of every surviving quarantine across all
+  volumes** before any state removal (D-17): each per-volume `<mnt>/.Trash-janitor/` op dir
+  is either restored via WAL replay or explicitly confirmed by the user; no default-confirm,
+  no skip-all.
+- Only after every quarantine is resolved is `~/.disk-janitor/` (ledger, WAL, lock) removed.
+- **Orphaned-quarantine detection**: a volume `.Trash-janitor` dir with no matching WAL is
+  warned at startup — the UI offers inspection and manual resolution; it never deletes
+  silently (P5, P6).
+- The uninstall flow is a settings-screen surface in the GUI spec (D-17), with the CLI
+  (ADR-14) exposing the same contract non-interactively for tests.
+
+**Consequences.**
+
+- No Disk Janitor uninstall can leave files in limbo — the guarantee holds even when the
+  WAL was lost (orphan path degrades to explicit manual confirm, never auto-delete).
+- Startup gains a cheap per-volume existence probe; the cost is one `stat` per mounted
+  volume's quarantine root.
+- The contract is testable end-to-end: uninstall with survivors → refused; restore all →
+  state removed clean.
+
+## ADR-17: Data format versioning — v1 frozen, forward-compat replay
+
+**Status:** accepted 2026-08-31 (owner-confirmed).
+
+**Context.** The owner set the posture explicitly: "not just for a class — real product"
+ (D-18). The ledger and WAL are append-only JSONL 台账 (ADR-4) and the plan manifest is the
+review artifact (ADR-10); any format drift between sessions on the demo Mac — or across
+machines via exports (D-19) — must degrade loudly, never fake success (P6), and the ledger
+must never be silently deleted or rewritten (P5).
+
+**Decision.**
+
+- **Ledger / WAL / manifest format v1 is frozen through the course** (through 9/10).
+- **Forward-compat replay** (D-18): unknown record kinds and unknown fields inside known
+  kinds are skipped **and counted** — the recovery report surfaces `skipped_unknown=N`, never
+  silently drops; `serde` `deny_unknown_fields` stays **OFF** on all envelope/record/manifest
+  types.
+- Schema evolution after 9/10: version-gated migration passes only — a reader seeing a higher
+  `v` either migrates in a pass that is logged and reviewable, or refuses with an explicit
+  message; never best-effort guesswork.
+
+**Consequences.**
+
+- Adding a record kind mid-course (e.g. `budget` gaining `model` per D-20) is an additive
+  change old readers tolerate — no migration needed within v1.
+- The skip-and-count contract doubles as the corruption story's honesty check: a replay that
+  skips records reports them, consistent with ADR-4's operations-ledger stance.
+- Real-product posture over courseware convenience: no throwaway "just reformat the ledger"
+  escape hatch exists (D-18).
+
+## ADR-18: GUI paradigm — Tauri + Svelte desktop App
+
+**Status:** accepted 2026-08-31 (owner-confirmed).
+
+**Context.** The owner's vision: an Apple-native-feeling desktop app, frictionless for
+people who barely know what a filesystem is — a real product, not a class exercise (D-10).
+The course's R2 in fact permits Web / 交互式终端 CLI / 桌面 App / 手机 App — any one (D-09);
+the earlier "ratatui required" reading was a repo-doc choice, now retracted, and the agent's
+prior "R2 conflict" claim was withdrawn. Research [12] verified the stack: Tauri 2.11.5
+(Apache-2.0 OR MIT) with wry 0.56.1 / tao 0.37.0, Svelte 5.57, `tauri::ipc::Channel` for
+progress streaming, window-vibrancy 0.8.0 for native material effects, and per-OS packaging
+in the same note (D-11).
+
+**Decision.**
+
+- **GUI-first desktop App** (D-10): Tauri 2.11.5 + Svelte 5.57 [12] is the product surface;
+  ADR-5's TUI is shelved.
+- **Rust core unchanged** (D-11, R1): `scan/`/`classify/`/`plan/`/`execute/`/`agent/` and
+  the `platform/` traits (ADR-11) are untouched; the GUI is a new frontend over the same
+  commands the CLI thin subset (ADR-14) wraps.
+- **UX-SPEC.md governs UI design** — layout, bilingual copy (ADR-13), first-run dashboard
+  (D-05), settings/uninstall (D-17) are specified there, not improvised in components.
+- Demo is a **product video + live preview** (D-21/D-22), not a terminal screencast.
+
+**Consequences.**
+
+- crate-map gains a frontend section (§1g per D-11): Tauri shell, Svelte app, svelte-i18n
+  catalog (ADR-13), window-vibrancy plugin; packaging pipeline per [12] feeding D-16's
+  installer plan.
+- SIGINT-era questions — raw-mode keymaps, ctrl-c routing, minimum-terminal-size handling —
+  are dissolved, not deferred: they have no GUI counterpart. Interrupt semantics move to the
+  GUI's cancel affordances under the same WAL-consistent rules (R4, D-15).
+- The agent loop (ADR-6) stays backend: the LLM proposes, the human confirms in the GUI
+  (P2, D-01).
 
 ---
 
