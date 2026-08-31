@@ -826,3 +826,8 @@ research notes [02]–[11]; iterate alongside `docs/DESIGN.md` and `docs/SPEC.md
 
 ---
 *Verdicts recorded 2026-08-30 in a single review session: 9 upheld, 3 amended (ADR-1, ADR-2, ADR-8), 0 rejected, 0 contested. Amendments propagate into DESIGN §3.10, SPEC §7–8, crate-map §1f/§3 (landed same day).*
+---
+*2026-08-31 session: GUI pivot (Tauri + Svelte per notes [12]/[13]) — ADR-5 amended, ADR-11
+amended, new ADR-13/14/16/17/18 from 22 owner decisions (decision register, 3 grill rounds).
+Statuses read "accepted (owner-confirmed)" pending the owner's line-by-line stamp pass over
+those five texts; every substantive decision was owner-answered in the register.*

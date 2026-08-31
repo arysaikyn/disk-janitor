@@ -205,19 +205,19 @@ fs4 = "1.1.0"                            # [08] advisory flock (sync feature MSR
 fs-err = "3.3.1"                         # [04][08] io error context on ledger/config IO
 serde = { version = "1.0.229", features = ["derive"] } # [08]
 serde_json = "1.0.151"                   # [08] JSONL ledger + CRC canonical bytes
-toml = "0.9"                             # config parsing [INFERENCE — verify on crates.io]
-thiserror = "2"                          # typed module errors [INFERENCE — verify]
-anyhow = "1"                             # CLI/plan boundary errors [INFERENCE — verify]
-clap = { version = "4", features = ["derive"] }   # subcommands [INFERENCE — verify]
-chrono = { version = "0.4", features = ["serde"] }# RFC3339 ts [INFERENCE — verify]
-uuid = { version = "1", features = ["v4"] }       # WAL op ids [INFERENCE — verify]
+toml = "0.9"                             # config parsing; 0.9 line current, 1.1.4 exists (spec-embedded, new) — stay on 0.9 for MSRV safety [verified 2026-08-31]
+thiserror = "2.0.20"                     # typed module errors [verified 2026-08-31]
+anyhow = "1.0.104"                       # CLI/plan boundary errors [verified 2026-08-31]
+clap = { version = "4.6.6", features = ["derive"] }   # subcommands [verified 2026-08-31]
+chrono = { version = "0.4.45", features = ["serde"] } # RFC3339 ts [verified 2026-08-31]
+uuid = { version = "1.26.0", features = ["v4"] }      # WAL op ids [verified 2026-08-31]
 
-# --- TUI (feature "tui") ---
-ratatui = { version = "0.30.2", optional = true } # [06]
-crossterm = { version = "0.29", optional = true } # [06] MUST match ratatui's hard dep
-unicode-width = { version = "0.2.2", optional = true } # [06] CJK/emoji cell widths
-signal-hook = { version = "0.4.4", optional = true }   # [06] SIGINT/SIGTERM/SIGTSTP
-indicatif = { version = "0.18.6", optional = true }    # [04][06] headless CLI progress ONLY
+# --- TUI (feature "tui") — SHELVED 2026-08-31 (GUI pivot, ADR-5/18): kept for reference; indicatif stays active for headless CLI ---
+ratatui = { version = "0.30.2", optional = true } # [06] shelved
+crossterm = { version = "0.29", optional = true } # [06] shelved (was ratatui hard dep)
+unicode-width = { version = "0.2.2", optional = true } # [06] shelved
+signal-hook = { version = "0.4.4", optional = true }   # [06] shelved
+indicatif = { version = "0.18.6", optional = true }    # [04][06] ACTIVE — headless CLI progress ONLY (ADR-14)
 # --- GUI (Tauri 2.11.5) lives in src-tauri/Cargo.toml, not this core workspace — see §1g (ADR-5/18) ---
 
 # --- LLM agent loop (feature "llm") ---

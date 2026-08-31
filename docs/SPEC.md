@@ -75,6 +75,7 @@ wrong?") are 99% of cleanup work; no existing tool owns either end-to-end.**
 ```
 
 Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidence> }`,
+`Evidence { kind, detail, strength }`, `PlanEntry`, `LedgerRecord`, `WalEntry`.
 
 ## 5. R1–R6 mapping (功能完整性, 30 pts)
 
