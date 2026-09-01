@@ -5,8 +5,8 @@ lets you undo everything.** Native macOS/Windows/Linux desktop app (Tauri + Rust
 Course project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026
 summer term — built as a real product first.
 
-**Status: design complete (13 research notes, 17 ADRs, UX spec) — implementation
-starts at M1.** Start reading at [`docs/OVERVIEW.md`](docs/OVERVIEW.md).
+**Status: design complete (13 research notes, 17 ADRs, full UX spec) — implementation
+starts at M1.** Start reading at [`docs/SPEC.md`](docs/SPEC.md) (Part A = overview).
 
 ## Why this exists
 
@@ -28,28 +28,27 @@ locations or black-box verdicts. Disk Janitor:
 
 ## Documentation
 
+**One spec, one decision log, one evidence archive.**
+
 | Doc | Contents |
 |---|---|
-| [`docs/OVERVIEW.md`](docs/OVERVIEW.md) | **start here** — vision, architecture, status, doc map |
-| [`docs/SPEC.md`](docs/SPEC.md) | product spec + R1–R6 rubric map |
-| [`docs/UX-SPEC.md`](docs/UX-SPEC.md) | the app: screens, wireframes, flows, visual language |
-| [`docs/DESIGN.md`](docs/DESIGN.md) | technical design: types, threads, syscalls, tests |
-| [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs with owner verdicts |
-| [`docs/crate-map.md`](docs/crate-map.md) | dependency plan (versions verified 2026-08) |
-| [`docs/ecosystem-survey.md`](docs/ecosystem-survey.md) | competitor analysis: copy/adapt/reject |
-| [`docs/decision-register.md`](docs/decision-register.md) | the 22 owner decisions behind the GUI pivot (08-31 grill) |
-| [`docs/research/`](docs/research/) | 13 primary-source research notes |
+| [`docs/SPEC.md`](docs/SPEC.md) | **the single source of truth** — Part A product & vision · Part B technical design · Part C UX design · Part D dependencies · status & milestones |
+| [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs (every architectural decision + owner verdicts) + the 22-decision grill register as appendix |
+| [`docs/research/`](docs/research/) | 13 verified research notes + `archive/` (competitor survey) — immutable evidence, cited as [NN] |
+
+Read SPEC.md top-to-bottom once; after that it's the reference you grep.
 
 ## Build (once implementation starts)
 
 ```bash
 cargo build          # Rust core (scan/classify/execute/ledger/agent)
 cargo test           # unit + integration (fixture trees only, never real user data)
-cargo tauri dev       # Tauri app (frontend; bun 1.3 present, npm/pnpm also work) — docs/UX-SPEC.md
+cargo tauri dev       # Tauri app (frontend; bun 1.3 present, npm/pnpm also work) — SPEC.md Part C
 ```
 
 ## License / provenance
 
 Course submission — pushed to the Tsinghua Git server; LICENSE decision deferred
-until after grading (decision register D-07, `docs/decision-register.md`). AI-assisted development throughout;
-conversation logs are a graded deliverable (per-milestone export, `docs/ai-logs/`).
+until after grading (decision register D-07 — appendix of `docs/design-decisions.md`).
+AI-assisted development throughout; conversation logs are a graded deliverable
+(per-milestone export, `docs/ai-logs/`).

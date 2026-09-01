@@ -2,8 +2,8 @@
 
 Course project for 程序设计训练（Rust 语言）2025–2026 夏季学期, THU CS (30240522-3).
 Topic: 「还我磁盘 Disk Janitor」— a disk-cleanup desktop App (Tauri + Svelte; Rust core),
-native on macOS/Windows/Linux. **Full spec: `docs/SPEC.md` — read it before proposing or
-writing anything. Project overview: `docs/OVERVIEW.md` (start there for vision/status).**
+native on macOS/Windows/Linux. **Everything lives in `docs/SPEC.md` (Parts A–D) — read it
+before proposing or writing anything; its top (Part A) is the project overview.**
 
 ## Hard rules
 
@@ -36,18 +36,16 @@ writing anything. Project overview: `docs/OVERVIEW.md` (start there for vision/s
   (quarantine/restore), `ledger/` (JSONL), `policy/` (NL strategy compiler),
   `agent/` (LLM loop), `platform/` (per-OS traits), `ui/` (Tauri+Svelte app in
   `app/`, thin CLI plumbing in the core bin). One concept per file.
-- UI is a Tauri + Svelte desktop App (ADR-5/18; `docs/UX-SPEC.md` governs) —
+- UI is a Tauri + Svelte desktop App (ADR-5/18; **SPEC.md Part C** governs) —
   NOT a TUI; the TUI stack is shelved. Chinese-primary + English-secondary
   bilingual labels (ADR-13); identifiers/comments in English.
 
 ## Course deliverables to keep green
-- Read `docs/OVERVIEW.md` first for the current vision/architecture/status;
+- Read `docs/SPEC.md` Part A first for the current vision/architecture/status;
   it is the front door — keep it in sync when reality changes.
-
-- Design docs (`docs/OVERVIEW.md`, `SPEC.md`, `DESIGN.md`, `UX-SPEC.md`,
-  `design-decisions.md`, `crate-map.md`) must stay in sync with implementation —
-  when code deviates from a doc, update the doc (or file an ADR) in the same
-  change. Course rule.
+- Design docs (`docs/SPEC.md` Parts A–D, `docs/design-decisions.md`) must stay in
+  sync with implementation — when code deviates from a doc, update the doc (or
+  file an ADR) in the same change. Course rule.
 - AI conversation logs are a graded deliverable — this session's transcript is part
   of that; keep timestamps and don't fabricate history.
 - R1–R6 are the grading rubric for 功能完整性 (30 pts). When implementing, map every
