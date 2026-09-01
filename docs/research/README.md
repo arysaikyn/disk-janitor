@@ -58,6 +58,6 @@ recommendations were landed as defaults (D-26…D-30) and remain owner-vetoable.
 | Q3 | Vault placement | A tab inside Ledger (台账\|恢复站) · B separate screen | note 17 §6: vault = actionable subset of ledger | A | **A approved → D-25** |
 | Q4 | Restore collision default | A rename (Keep Both) · B ask always | note 17 §5: Time Machine defaults to Keep Both; reverse-rename maps for free | A | default landed → D-26 (vetoable) |
 | Q5 | One-tap typed-gate placement | A at purge (final typed total) · B per-batch | note 15 §2/risks + note 13 §G2: signature moment must not be weakened | A | default landed → D-27 (vetoable) |
-| Q6 | Error catalog into SPEC? | A append as SPEC Part C appendix · B keep as research note only | note 18 §3: paste-ready table | A |
-| Q7 | Parity claims in demo copy | A use =/≈ wording with deltas in same breath · B claim all 3 platforms equal | note 19 risks #1 + SPEC Part A §8 honest-guarantee | A |
-| Q8 | Vault countdown clock | A ledger-recorded monotonic timestamps · B wall clock | note 17 risks #4: clock jumps must not coerce grace | A |
+| Q6 | Error catalog into SPEC? | A append as SPEC Part C appendix · B keep as research note only | note 18 §3: paste-ready table | A | default landed → D-28 (vetoable) |
+| Q7 | Parity claims in demo copy | A use =/≈ wording with deltas in same breath · B claim all 3 platforms equal | note 19 risks #1 + SPEC Part A §8 honest-guarantee | A | default landed → D-30 (vetoable) |
+| Q8 | Vault countdown clock | A ledger-recorded monotonic timestamps · B wall clock | note 17 risks #4: clock jumps must not coerce grace | A | default landed → D-29 (vetoable) |
