@@ -7,9 +7,11 @@
 > Course: 程序设计训练（Rust 语言）(30240522-3), THU CS. Keep this file in sync with the
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
-**Status snapshot (2026-08-31):** design 100% · implementation 0% (M1 awaits owner go) ·
-5 ADRs (13/14/16/17/18) await owner line-review · 9/1 design comments: review & submit.
-**Evidence base:** `research/` — 13 verified notes + the competitor survey (archive, immutable).
+**Status snapshot (2026-09-01):** design 100% · implementation 0% (M1 awaits owner go) ·
+5 ADRs (13/14/16/17/18) await owner line-review · decisions D-01…D-30 confirmed (Round 4
+landed 09-01) · 9/1 design comments: review & submit.
+**Evidence base:** `research/` — 20 verified notes (01–13 verified at source; 14–20 landed
+09-01, 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
 
 **Pre-merge citation map** (existing references stay valid):
 
