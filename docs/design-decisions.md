@@ -870,6 +870,16 @@ D-20 expense_sheet | Standard columns: date / model / calls / prompt+completion 
 D-21 demo_dataset | (pending owner after competitor-presentation research — note 13) demo will be PRODUCT VIDEO (Screen Studio/Hyperframes) + live preview; dataset decision deferred to video-script step | DESIGN §8 M5 note
 D-22 demo_llm | Product video + live preview after (owner explicit). Fallback chain: live DeepSeek → pre-recorded trajectory replay | DESIGN §8 M5 note
 
+## Round 4 (research wave 09-01, owner-confirmed via decision sheet)
+D-23 brand_identity | EN identity = COINAGE on the undo promise (还我磁盘 stays CN-primary brand; "Disk Janitor" demoted to internal/working title — live collision audit found 4+ shipping products using it, note 20 §1); EN candidate pick pending | SPEC Part C §1 + note 20 §3
+D-24 one_tap_set | One-tap clean auto-marks PureCache + RebuildableFromSource, surfaces explicit confirm list 「N 项待确认 N awaiting confirm」 for everything else; enabled only after a scan exists | SPEC Part C §3.2 + note 15 §2/§6
+D-25 vault_tab | 恢复站 Recover vault = TAB inside Ledger (台账|恢复站), not a separate screen; actionable subset of ledger (apply records in grace), grouped by plan session, countdown per row, 待销毁 pending section, WAL-replay banner | SPEC Part C §3.7 + note 17 §6
+D-26 restore_collision | Restore collision triad default = RENAME (Keep-Both, reverse-rename to original-<n>); 跳过 skip and 覆盖 replace (typed confirm) available | SPEC Part C §4.4 + note 17 §5
+D-27 purge_gate | Typed byte-count gate stays at PURGE (single final total for one-tap), never per-batch — signature moment not weakened | SPEC Part C §4.2 + note 15 risks #2
+D-28 error_catalog | E-#### failure/error catalog (E1001–E3003, CN/EN P1 copy) is paste-ready appendix to SPEC Part C; source of truth note 18 | SPEC Part C §3.7 + note 18
+D-29 countdown_clock | Vault countdown = ledger-recorded monotonic elapsed, never wall clock (clock jumps cannot coerce grace) | SPEC Part C §3.7 + note 17 risks #4
+D-30 parity_copy | Demo/packaging parity claims use =/≈ delta language (note 19 §3), deltas in the same breath — never flat 3-platform claim | SPEC Part A §8 + note 19
+
 ## Extracted design principles (from audit, owner-endorsed by round choices)
 P1 拒绝+证据+替代 — refuse with evidence, offer the safe alternative (D-03)
 P2 LLM 建议代码决策 — the LLM advises; local code decides (D-01)

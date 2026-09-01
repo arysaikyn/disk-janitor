@@ -239,7 +239,9 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 ## 8. Explicit non-goals
 Cross-platform scope is a goal (§1); what stays out: generic file search; content indexing;
 auto-delete daemon (monitoring/reminder maybe later per classmate feedback). What is NOT
-promised is identical atomicity on every platform — the honest guarantee:
+promised is identical atomicity on every platform — the honest guarantee: (D-30:
+parity claims in demo/packaging copy use the =/≈ delta language of note 19 §3, deltas
+documented in the same breath, never a flat "3-platform" claim)
 
 | Platform | Atomic no-clobber quarantine move | Caveats |
 |---|---|---|
@@ -255,14 +257,18 @@ Conceived 2026-08-27 from the course topic post; scaffold 08-30
 09–11, ADR-11/12, `102fef2`). A 3-round grill on 08-31 surfaced 28 design gaps and
 produced 22 owner decisions — the pivotal one: **TUI → GUI-first Tauri desktop App**
 (UX-SPEC, ADR-5/13/14/16/17/18, `8308fcf`). Honesty-pass fixes landed same day
-(`abc23f2`, `88b8dbe`); this overview + entry-point sync is `f0fcaa6`. Implementation
-(M1) awaits the owner's go.
+(`abc23f2`, `88b8dbe`); overview + entry-point sync `f0fcaa6`. A second research wave
+landed 09-01 (notes 14–20: space-discovery UX, one-tap receipts, protected folders,
+vault/restore UX, failure catalog, platform parity, brand/audit) with owner decisions
+D-23…D-30 (brand coinage, one-tap auto-mark set, vault tab, collision default, typed-gate
+placement, error-catalog appendix, parity copy, countdown clock). Implementation (M1)
+awaits the owner's go.
 
 ## Where we are (2026-08-31)
 
 | Phase | Status |
 |---|---|
-| Research (13 notes) | ✅ done — licenses/versions verified at source |
+| Research (20 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01 (15/17/19 vendor-URL re-verify queued, note-flagged) |
 | Architecture (17 ADRs) | ✅ 12 owner-stamped · ⏳ 5 awaiting owner line-review (13/14/16/17/18) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) · ⏳ visual mockups open |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |
@@ -1145,9 +1151,14 @@ baseline preserved, Linux/Windows deltas documented in §3.10 and §5.5.*
 
 ## 1. Product identity
 
-**Name.** 「还我磁盘」 Disk Janitor — Chinese primary, English secondary everywhere in the
-UI (D-02, D-12). The name is the promise: 还我 = "give it back" — 删除是操作，恢复是权利
+**Name.** 「还我磁盘」 — Chinese primary, English secondary everywhere in the UI (D-02,
+D-12). The name is the promise: 还我 = "give it back" — 删除是操作，恢复是权利
 (deletion is an operation, restoration is a right) [SPEC Part B §1].
+**Brand (D-23, owner 2026-09-01).** "Disk Janitor" is retained as the internal/working title
+only — a live name-collision audit found 4+ shipping products using it (note 20 §1). The
+product brand is **还我磁盘** (CN, primary); the EN identity is a **coinage on the undo
+promise** — the 归还/restore gesture, not a generic "cleaner" noun — pending a final
+candidate pick (note 20 §3, direction B).
 
 **Positioning.** An evidence-driven, reversibility-first disk cleaner with an Apple-native
 feel, usable by people who barely know what it is (D-10). It answers the question `du`
@@ -1282,14 +1293,19 @@ paths stay neutral.
 │              │  ┌──────────────────────────────┐                     │
 │              │  │  开始扫描 Start scan          │  ← 唯一主操作 CTA   │
 │              │  └──────────────────────────────┘                     │
+│              │  [ 一键清理 One-tap clean ] 二级操作 (D-24)             │
 │              │                                                       │
 │              │  ¹ Time Machine 本地快照锁定的空间，过期后释放         │
 │              │    freed after snapshot expiry [SPEC Part B §3.1]          │
 └──────────────┴───────────────────────────────────────────────────────┘
 ```
 
-Entry: default at launch; the scan button is the only CTA (D-05 — dashboard + hint line,
-no wizard state machine). Volume truth shows raw free and snapshot-held space as two
+Entry: default at launch; the scan button is the only primary CTA (D-05 — dashboard + hint
+line, no wizard state machine). A secondary **一键清理 One-tap clean** (D-24) becomes
+enabled only after a scan exists; it auto-marks grades **PureCache + RebuildableFromSource**
+(owner 2026-09-01, note 15 §2/§6) and surfaces an explicit confirm list 「N 项待确认 N
+awaiting confirm」 for anything else — it never implies it saw everything.
+Volume truth shows raw free and snapshot-held space as two
 labeled numbers [SPEC Part B §3.1]. 「0 已销毁」 is the anti-fear hero line [13 §G5].
 
 Empty state (first run, D-05):
@@ -1459,12 +1475,22 @@ ledger records, not a shadow state [SPEC Part B §3.5].
 ```
 
 - Restore affordance lives here within the grace window: select an `apply` record →
-  恢复 Restore (§4.4). Expired-grace survivors surface as purge candidates with the
+  恢复 Restore (§4.4). The ledger hosts a **恢复站 Recover vault tab** (D-25, owner
+  2026-09-01, note 17 §6): the actionable subset of the ledger — only `apply` records inside
+  72 h grace, grouped by plan session, per-row size + countdown (剩 Xh Ym), 待销毁 pending
+  section for expired (never auto-purged, ADR-10), and a banner surfacing WAL-replay resume
+  after an interrupted apply (D-15). Countdown clock is ledger-recorded monotonic elapsed,
+  never wall clock (D-29, note 17 risks #4). Expired-grace survivors surface as purge
+  candidates with the
   countdown shown, never auto-purged [ADR-10].
 - `purge` rows keep the typed byte count visible forever — the audit is the proof
   (P5, P7). Every public claim is generated from this ledger, never hand-typed (P7).
 - Export = raw JSONL copy (same bytes the product replays); no telemetry channel
   exists to send it anywhere (D-06).
+
+> **Error catalog (D-28).** The E-#### failure/error table (E1001–E3003, CN/EN copy in P1
+> shape) is the paste-ready appendix to this Part C — source of truth:
+> `docs/research/18-failure-error-catalog.md`.
 
 ### 3.8 设置 Settings (sheet, ⌘,)
 
@@ -1575,7 +1601,8 @@ banner is generated from the probe result, never from a guess (P7).
 ### 4.2 Review → plan → apply → purge — the typed byte-count modal (signature moment)
 
 The purge gate is the product's signature moment [13 §G2]: the one irreversible step,
-made deliberate. No other tool gates on the user typing the exact byte count
+made deliberate — a single final typed total for one-tap flows, never per-batch
+(D-27, note 15 risks #2). No other tool gates on the user typing the exact byte count
 [ADR-10][SPEC Part B §5.3].
 
 ```
@@ -1653,8 +1680,10 @@ resumption notice after an interrupted apply.
 
 - Restore is a *soft* gate — it is the safe direction; friction belongs to destruction,
   not to recovery (P4's corollary).
-- After restore, the original path is re-verified (target exists? `EEXIST` → offer
-  rename-or-skip with evidence, P1) — never overwrite silently (P6).
+- After restore, the original path is re-verified. Collision triad (D-26, default = rename):
+  重命名 rename (default — reverse-rename to `original-<n>`, nothing overwritten) / 跳过 skip
+  (record `restored: skipped`) / 覆盖 replace (typed-byte confirm, never silent, P6).
+  Evidence: Time Machine Keep-Both grammar, note 17 §5 / note 02 §4.
 - Purged entries: restore is impossible and the Ledger says so plainly (「已销毁，无法
  恢复 destroyed — not restorable」) — honesty over false comfort (P6). The 72 h grace
   countdown is always visible on restorable rows [ADR-10].
