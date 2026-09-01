@@ -1,8 +1,9 @@
 # Disk Janitor — Technical Design
 
-> Build-ready architecture, 2026-08-30. Sources: `docs/SPEC.md` (draft v0) + research notes
-> `docs/research/02…11-*.md` (02–08 verified 2026-08-30; 09–11 are the Windows/Linux/
-> cross-platform-primitives notes behind the 3-platform amendment), cited inline as `[NN §x]`.
+> Build-ready architecture, 2026-08-30 (GUI-amended 08-31). Sources: `docs/SPEC.md` (draft v0)
+> + research notes `docs/research/02…13-*.md` (02–08 verified 2026-08-30; 09–11 the Windows/
+> Linux/cross-platform-primitives notes behind the 3-platform amendment; 12–13 the Tauri-stack
+> and product-presentation notes behind the GUI pivot), cited inline as `[NN §x]`.
 > Layout = single Rust crate `disk_janitor` (lib + bin); modules per SPEC §4.
 > Integration tests link the lib; no runtime besides per-thread runtimes (§2).
 
@@ -130,9 +131,11 @@ Shared state: `Arc<AtomicBool>` cancel (checked per directory / candidate / plan
 ### 2.4 Crates by layer
 
 dua-core 3.3.0, crossbeam-channel, rayon, sysinfo, nix 0.31.3 + libc 0.2.189, rustix (xattr),
-ratatui 0.30.2 + crossterm 0.29 (pinned pair [06 §1]), unicode-width, signal-hook, indicatif
-(CLI only), async-openai 0.41.3 + tokio (agent thread only), tiktoken-rs, serde / serde_json /
-toml, crc32fast, tempfile 3.27.0, fs4, fs-err, same-file, dirs, secrecy.
+indicatif (headless CLI only), async-openai 0.41.3 + tokio (agent thread only), tiktoken-rs,
+serde / serde_json / toml, crc32fast, tempfile 3.27.0, fs4, fs-err, same-file, dirs, secrecy.
+The Tauri + Svelte GUI layer (per UX-SPEC.md, ADR-5/18) lives in `src-tauri/` + `app/` —
+ratatui/crossterm/unicode-width/signal-hook are SHELVED (GUI pivot) and appear only in
+crate-map §1c for history.
 
 Per-platform additions behind `#[cfg]` gates ([09][10][11]): Windows — `windows` 0.62.2 or
 `windows-sys` 0.61.2 (FileRenameInfoEx / FlushFileBuffers / bulk enumeration), `winreg` 0.56.0;
@@ -342,13 +345,13 @@ the ledger is simple enough to own) [08 §rec].
 
 ### 3.6 `policy/` — intent → constraints
 
-Responsibility: compile a user intent (NL sentence, TUI toggles, or CLI flags) into
+Responsibility: compile a user intent (NL sentence, GUI controls, or CLI flags) into
 `PolicyConstraints`. Local rule compiler first; LLM fallback sees aggregates only.
 
 | Input | Path |
 |---|---|
 | NL sentence | ordered first-match regex/keyword rules (Hazel's rule philosophy [02 §4]): "腾出 25GB" ⇒ `target_bytes`; "别动我这两周在跑的项目" ⇒ `deny_under_mta=14 d`; "别动 Xcode 归档" ⇒ `deny_globs += ~/Library/Developer/Xcode/Archives` |
-| TUI toggles / CLI flags | structured → `PolicyConstraints` directly |
+| GUI controls / CLI flags | structured → `PolicyConstraints` directly |
 | LLM fallback (only when local rules are uncertain) | prompt = intent sentence + `AggregateStats { total_by_grade, count_by_grade, top_dir_shapes }` — no paths; JSON-schema'd output, validated + clamped locally [07 §privacy 1,4] |
 
 ```rust
@@ -364,7 +367,8 @@ change, not a code change.
 ### 3.7 `agent/` — tool-calling loop (the privacy chokepoint)
 
 Responsibility: an OpenAI-compatible chat-completions tool loop that decides reclaim actions;
-enforces budget + stop conditions; streams a trajectory for the TUI. The single architectural
+enforces budget + stop conditions; streams a trajectory for the GUI Agent panel / Ledger screen
+(UX-SPEC.md §3.9). The single architectural
 point where the privacy invariant is enforced.
 
 Loop shape — a sans-IO state machine (rig-run pattern; testable + serializable without a
@@ -441,7 +445,8 @@ survives the pivot:
 
 ### 3.9 `config/` — `config.toml` + env fallback
 
-Responsibility: `config.toml` (R3) + env overrides + TUI settings pane; secrets never logged.
+Responsibility: `config.toml` (R3) + env overrides + GUI settings sheet (UX-SPEC.md §3.8);
+secrets never logged.
 
 ```rust
 pub struct Config {
@@ -546,7 +551,7 @@ move/restore) [11 §rec].
 
 ## 4. Data flow — one scenario end-to-end
 
-User request, typed in the TUI agent screen: **"腾出 25 GB，别动我这两周在跑的项目"**.
+User request, typed in the GUI agent panel (UX-SPEC.md §3.9): **"腾出 25 GB，别动我这两周在跑的项目"**.
 
 | # | Stage | What happens | Artifacts |
 |---|---|---|---|
@@ -554,9 +559,9 @@ User request, typed in the TUI agent screen: **"腾出 25 GB，别动我这两�
 | 2 | scan | volume info read (free_important vs raw, labeled [02 §3]); dua-core walk of `~` with materialization OFF; `DirStat` batches stream over `scan_rx`; footer = atomic snapshot. Finds: `node_modules` A 2.1 GiB, `node_modules` B 0.9 GiB, `DerivedData` 6.8 GiB, `~/.npm/_cacache` 3.2 GiB, `Docker.raw` (apparent 64 GiB / allocated 11 GiB), pnpm store (hardlinked into several projects) | `ScanTotals`; `scan_result` ledger rec |
 | 3 | classify | ancestor probes: **A** — `package-lock.json` newer than dir ⇒ `RebuildableFromSource`, regen `npm ci` ≈ 40 s [03 §1]; **B** — no `package.json` in any ancestor ⇒ orphan ⇒ prompt-only [03 §0]; **DerivedData** — sibling project dirs + `IDECustomDerivedDataLocation` resolved [03 §4] ⇒ `RebuildableFromSource`; **_cacache** — hash-named children ⇒ `PureCache` CAS, whole-store action only [03 §1]; **Docker.raw** — sparse (apparent ≫ allocated) ⇒ `HandsOff` as a file + `PruneCommand docker system prune` [03 §6]; pnpm store ⇒ `nlink>1` discount; `.git/HEAD` mtimes feed `deny_under_mta` | `Candidate` stream; `verdict` recs (`path_hash` only) |
 | 4 | plan | `build()`: 11 `Quarantine` entries (5.4 GiB) — A, DerivedData, `_cacache` whole-store (the mtime-hot rule is waived for whole-store actions [03 risks #7]); 2 `PruneCommand` (`docker system prune`, `brew cleanup --prune=90d` 0.4 GiB); 3 `Refuse` (node_modules B orphan ×1, `MtimeHot` ×2); Docker.raw excluded (sparse honesty: 11 GiB allocated, not 64 GiB apparent). Totals hardlink-discounted. `write_manifest` → `plan-20260830-1432.json` | manifest JSON; `plan` ledger rec |
-| 5 | apply | confirm in TUI → Exec thread, per entry: WAL intent `{op, entry, undo{original_path, grace_expires_at=+72 h}}` → `sync_data` (`F_FULLFSYNC` on Apple [08 §2]) → `renamex_np(RENAME_EXCL\|RENAME_NOFOLLOW_ANY)` into `<vol>/.Trash-janitor/w-0042/` → WAL result → parent-dir sync at the op boundary. **Zero bytes freed.** Ctrl-C mid-apply cancels between entries (WAL stays consistent); flock keeps a second instance out | `apply` recs; `ExecEvent`s |
+| 5 | apply | confirm in GUI (plan-review screen, UX-SPEC §3.5) → Exec thread, per entry: WAL intent `{op, entry, undo{original_path, grace_expires_at=+72 h}}` → `sync_data` (`F_FULLFSYNC` on Apple [08 §2]) → `renamex_np(RENAME_EXCL\|RENAME_NOFOLLOW_ANY)` into `<vol>/.Trash-janitor/w-0042/` → WAL result → parent-dir sync at the op boundary. **Zero bytes freed.** Ctrl-C mid-apply cancels between entries (WAL stays consistent); flock keeps a second instance out | `apply` recs; `ExecEvent`s |
 | 6 | purge | review shows "5.4 GiB quarantined — purge frees 5.4 GiB"; user types `5841673728` (exact allocated); mismatch refuses. Per-entry recursive unlink; `bytes_freed` echoed into the WAL; freed report notes TM-snapshot pinning if snapshots exist [02 §3] | `purge` recs |
-| 7 | restore (next morning) | a project won't build ⇒ `restore w-0042` (or one TUI key): reverse renames from the WAL `(original, quarantine)` pairs for entries not yet purged; `undoes` seq recorded; within the 72 h grace; the quarantine op dir is removed when empty | `restore` recs |
+| 7 | restore (next morning) | a project won't build ⇒ `restore w-0042` (or the Ledger screen's one-click Restore, UX-SPEC §3.7): reverse renames from the WAL `(original, quarantine)` pairs for entries not yet purged; `undoes` seq recorded; within the 72 h grace; the quarantine op dir is removed when empty | `restore` recs |
 | 8 | agent overlay (same data) | user asks the agent "what's safe?": it calls `candidates` ⇒ sees only `C-001…` `{bytes, grade, evidence_summary}`; calls `build_plan`; calls `record_verdict`. It never sees a path (chokepoint + CI leak test); cost accrues per call; `Budget` interrupt fires at the cap | `budget` recs |
 
 Byte ledger across the scenario: `apply` moves 0 bytes; `purge` frees 5.4 GiB allocated;
@@ -609,7 +614,7 @@ Recovery on startup [08 §5][08 §8][08 risk #5]:
 
 | Gate | Mechanism |
 |---|---|
-| apply | plan manifest reviewed in TUI; apply is reversible, so the gate is soft (Enter) |
+| apply | plan manifest reviewed in the GUI plan-review screen (UX-SPEC §3.5); apply is reversible, so the gate is soft (Enter) |
 | purge | type the exact allocated byte count; mismatch refuses; this is the only irreversible step |
 | prune commands | dry-run output rendered first (`brew -n`, docker filter preview); network regen is opt-in [03 §5][03 §3] |
 | hard-evidence refusals | `MtimeHot`/`FileLock`/`OrphanTree`/`Dataless`/flag-blocks never enter the auto plan; surfaced as prompts [03 §0] |
@@ -774,7 +779,8 @@ Invariants worth testing:
 | Platform matrix | CI matrix `macos-latest` / `windows-latest` / `ubuntu-latest` on every push: macOS runs the macOS `Syscall-level` suite above on APFS; Linux runs `renameat2(RENAME_NOREPLACE)`→`EEXIST` on ext4/tmpfs, `EXDEV` across mounts, fsync(file)+fsync(dirfd) WAL ordering, `/proc/self/mountinfo` fstype resolution, NFS/skip gating; Windows runs `FileRenameInfoEx(Flags=0)`→target-exists error, `MoveFileExW` fallback path, `dwVolumeSerialNumber` same-volume check, junction non-descent, `\\?\` long-path manifest round-trip, OneDrive `RECALL_ON_DATA_ACCESS` detection (skip if OneDrive absent) [09 §0/§delta][10 §0][11 §1/§4]. Syscall tests are `#[cfg]`-gated per OS (`#[cfg(target_os = "macos")]`, `#[cfg(target_os = "linux")]`, `#[cfg(windows)]`); portable layers (ledger/WAL, plan, classify fixtures, TUI snapshots, agent loop) run on all three runners. |
 | Crash injection (WAL) | spawn a child `janitor` applying a plan with `KILL_AT ∈ {before_wal_sync, after_wal_sync_before_rename, after_rename_before_result, mid_batch}`; `kill -9`; parent runs `recover()` and asserts: committed ops present exactly once, no phantom ops, torn tail truncated + parked to `*.torn`, `seq` gaps reported. Optional deep probe via `dtrace`/`FSInOut` for cross-file ordering [08 risks #2]. |
 | Ledger property tests | random op sequences + random truncation points → replay invariants hold (skip-and-continue, monotonic `seq` after gaps, no CRC false positives) [08 §5]. |
-| TUI | ratatui `TestBackend` snapshot tests per screen [06 §rec]; input-channel drop ⇒ scan cancel+join (dua semantics) [04 §progress]; the purge modal rejects a mismatched byte string. |
+| GUI (purge modal + flows) | Svelte component tests + Tauri `ipc::Channel` mock: the typed byte-count modal rejects a mismatched byte string; interrupt semantics per §5 (apply auto-resume, purge runs to completion); evidence panel renders a full `Evidence` chain; bilingual labels CN/EN per ADR-13. Wireframe conformance per UX-SPEC.md §3. |
+| (shelved TUI row kept for traceability) | ratatui `TestBackend` snapshot tests per screen [06 §rec] — superseded by the GUI row above (ADR-5/18). |
 | Scanner edge cases | firmlink walk of `/` (no double-walk of the Data side) [04 §4]; an iCloud-shaped tree scanned with materialization OFF (no downloads — assert no content reads via unchanged mtime/size); a mounted volume appearing mid-tree (`st_dev` reject in `descend`). |
 | Agent | sans-IO `RunState` serde round-trip + resume; a stub OpenAI-compatible HTTP server (e.g. wiremock) covering: malformed `arguments` JSON (repair path), DeepSeek `reasoning_content` echo shape, OpenRouter final usage-chunk deviation, Ollama id-less tool calls, missing final usage chunk (estimate marked unverified, not billed) [07 §providers, risks]; leak-test regexes on every outbound message [07 §privacy 5]. |
 | NFR (D-13/D-14) | criterion-style bench: ≥1 GiB/s metadata-only scan on M1 Pro, home dir <2 min — CI-gated on the macOS runner; memory-ceiling fixture: 1M synthetic entries assert RSS < 500 MB. |

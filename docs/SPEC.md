@@ -4,8 +4,9 @@
 > course requirements. Keep this document in sync with the implementation (course rule).
 > Implementation design lives in `docs/DESIGN.md` (architecture), `docs/crate-map.md`
 > (dependencies), `docs/ecosystem-survey.md` (reuse landscape), `docs/design-decisions.md`
-> (ADRs); raw evidence in `docs/research/` (11 notes, versions/licenses verified 2026-08-30;
-> notes 09–11 cover the Windows/Linux/platform-primitives research behind the 3-platform design).
+> (ADRs); raw evidence in `docs/research/` (13 notes — 01–08 core corpus verified 2026-08-30;
+> 09–11 the Windows/Linux/platform-primitives notes behind the 3-platform design, verified
+> 2026-08-30; 12–13 the Tauri-stack + product-presentation notes behind the GUI pivot, 08-31).
 
 ## 1. Positioning
 

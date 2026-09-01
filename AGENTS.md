@@ -1,8 +1,9 @@
 # CLAUDE.md — Disk Janitor agent rules
 
 Course project for 程序设计训练（Rust 语言）2025–2026 夏季学期, THU CS (30240522-3).
-Topic: 「还我磁盘 Disk Janitor」— a scenario-specialized macOS disk-cleanup Agent.
-**Full spec: `docs/SPEC.md` — read it before proposing or writing anything.**
+Topic: 「还我磁盘 Disk Janitor」— a disk-cleanup desktop App (Tauri + Svelte; Rust core),
+native on macOS/Windows/Linux. **Full spec: `docs/SPEC.md` — read it before proposing or
+writing anything. Project overview: `docs/OVERVIEW.md` (start there for vision/status).**
 
 ## Hard rules
 
