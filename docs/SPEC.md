@@ -268,7 +268,11 @@ placement, error-catalog appendix, parity copy, countdown clock). Implementation
 awaits the owner's go. On 09-07 the ADR line-review pass completed — all 17 ADRs
 owner-stamped (13/14/16/17/18 confirmed as written); research note 21 (DaisyDisk
 design-principle extraction, why-it-feels-good) landed same day — its scope-changing
-candidates deliberately left unspec'd by owner call.
+candidates deliberately left unspec'd by owner call. On 09-08 the course calendar was
+corrected against the official 教学日历 (no 9/1-comments or 9/6-demo rounds; only
+09-08 习题课·任务研讨 and 09-10 课堂展示 remain) and the UI/UX gap closed: interactive
+visual mockup of all screens landed at `docs/mockups/` (visual language: calm dark
+navy, bilingual CN-primary, grade colors per §3.1; verified in-browser).
 
 ## Where we are (2026-09-08)
 
@@ -276,7 +280,7 @@ candidates deliberately left unspec'd by owner call.
 |---|---|
 | Research (21 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged) |
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
-| UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) · ⏳ visual mockups open |
+| UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |
 | **09-10 课堂展示** (presentation + 展示报告; 项目 = 50%) | ❌ not started (competitor research ready, note 13) |
 | 09-08 习题课·任务研讨 (today) | ✅ 需求分析/design docs ready for discussion |
