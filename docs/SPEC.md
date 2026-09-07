@@ -7,9 +7,10 @@
 > Course: 程序设计训练（Rust 语言）(30240522-3), THU CS. Keep this file in sync with the
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
-**Status snapshot (2026-09-07):** design 100% · implementation 0% (M1 awaits owner go) ·
+**Status snapshot (2026-09-08):** design 100% · implementation 0% (M1 awaits owner go) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-30
-confirmed (Round 4 landed 09-01) · 9/1 design comments: review & submit.
+confirmed (Round 4 landed 09-01) · course calendar corrected 09-08 against the official
+教学日历 — no 9/1-comments or 9/6-demo rounds exist; remaining course event: 09-10 课堂展示.
 **Evidence base:** `research/` — 21 verified notes (01–13 verified at source; 14–20 landed
 09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
 
@@ -35,11 +36,11 @@ confirmed (Round 4 landed 09-01) · 9/1 design comments: review & submit.
   ## 3. Scenario customizations (course mandate: ≥2)
   ## 4. Architecture sketch
   ## 5. R1–R6 mapping (功能完整性, 30 pts)
-  ## 6. Milestones (course deadlines: 9/1 comments, 9/6 public demo, 9/8 tryouts, 9/10 presentation)
+  ## 6. Milestones (course calendar: 09-08 习题课·任务研讨 → 09-10 课堂展示)
   ## 7. Open questions / risks (owner flagged these as gut-feel)
   ## 8. Explicit non-goals
   ## History
-  ## Where we are (2026-09-07)
+  ## Where we are (2026-09-08)
 - **Part B — Technical design**
   ## 1. Overview
   ## 2. System architecture
@@ -215,7 +216,7 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 | R5 context/history | JSONL ledger + session save/load; agent-loop trajectory visible in App (Ledger screen) |
 | R6 tokens & cost | per-call usage captured → running cost at configured prices; budget ⇒ interrupt |
 
-## 6. Milestones (course deadlines: 9/1 comments, 9/6 public demo, 9/8 tryouts, 9/10 presentation)
+## 6. Milestones (official 教学日历, verified 09-08: 09-08 习题课·任务研讨; 09-10 课堂展示 — the only remaining course event)
 
 - M0 scaffold — repo, agent files, spec (this commit).
 - M1 scan + classify core w/ fixture-tree tests.
@@ -269,7 +270,7 @@ owner-stamped (13/14/16/17/18 confirmed as written); research note 21 (DaisyDisk
 design-principle extraction, why-it-feels-good) landed same day — its scope-changing
 candidates deliberately left unspec'd by owner call.
 
-## Where we are (2026-09-07)
+## Where we are (2026-09-08)
 
 | Phase | Status |
 |---|---|
@@ -277,8 +278,8 @@ candidates deliberately left unspec'd by owner call.
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) · ⏳ visual mockups open |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |
-| Demo video + 9/10 presentation | ❌ not started (competitor research ready, note 13) |
-| **9/1 design comments** | ⏳ docs complete as of 2026-08-31 — owner review & submit **by 9/1** |
+| **09-10 课堂展示** (presentation + 展示报告; 项目 = 50%) | ❌ not started (competitor research ready, note 13) |
+| 09-08 习题课·任务研讨 (today) | ✅ 需求分析/design docs ready for discussion |
 
 
 # Part B — Technical design
@@ -1070,20 +1071,20 @@ Invariants worth testing:
 
 ## 8. Build sequencing
 
-Course deadlines: 9/1 comments, 9/6 public demo, 9/8 tryouts, 9/10 presentation [SPEC Part A §6].
+Course calendar (official 教学日历, corrected 09-08): 09-08 习题课·任务研讨; 09-10 课堂展示 — the only remaining course event [SPEC Part A §6].
 
 | Milestone | Scope | Concrete work items | Exit criterion |
 |---|---|---|---|
 | **M1** scan + classify core | `scan/`, `classify/` + fixtures | cargo workspace skeleton; dua-core integration (`walk_roots`, `Order::ParentFirst`, `descend` dev-check); `setiopolicy_np` `extern "C"` + constants [04 risks]; `VolumeInfo` via sysinfo; fixture generator; classify path rules v1 (node/rust/python/xcode [03 §1–4]) + evidence probes (lockfile, orphan, mtime, nlink); `janitor scan --json` CLI | scanning this Mac yields classified JSON with honest `alloc` bytes |
 **Platform sequencing** (deadlines first, platforms second): M1 stays macOS-first for the
-9/1 comment deadline — the `scan/`/`classify/` core, fixtures, and the dua-core macOS walker
+09-10 课堂展示 deadline — the `scan/`/`classify/` core, fixtures, and the dua-core macOS walker
 land on this Mac; the `platform/` traits (§3.10) are sketched at M1 so M2 can slot impls in
 without re-plumbing, but only the macOS impl is exercised until M2 [09][10][11].
 
 | **M2** plan / apply / purge / restore + WAL + ledger | `plan/`, `execute/`, `ledger/` | `renamex_np` layer + capability probe; per-volume quarantine + per-volume WAL; record framing (crc32fast envelope); flock; `recover()`; plan builder + manifest write/load; CLI `plan/apply/purge/restore`; crash-injection harness (`KILL_AT`). **Platform: M2 wires the trait impls for Linux** — `AtomicMove` via `renameat2(RENAME_NOREPLACE)` + per-volume fstype probe (`/proc/self/mountinfo`), fsync(file)+fsync(dirfd) durability pair, XDG cache roots, `requires-elevation` refusal class [10 §0/delta][11 §1] | CLI round trip incl. `kill -9` recovery passes |
-| **M3** GUI shell | `ui/` | GUI shell per SPEC Part C (Tauri+Svelte) [12]: Tauri 2.11.5 shell + Svelte 5.57 app; named commands + `ipc::Channel` progress streams per §3.8; Dashboard/Review/Plan/Apply screens per UX-SPEC Part A §3; purge gate modal; settings sheet v0. **Platform: M3 keeps Windows on the portable baseline** — `ignore::WalkParallel` walker, std path resolution; no Windows-specific UI work [11 §5] | full flow usable in the GUI (9/6 demo) |
+| **M3** GUI shell | `ui/` | GUI shell per SPEC Part C (Tauri+Svelte) [12]: Tauri 2.11.5 shell + Svelte 5.57 app; named commands + `ipc::Channel` progress streams per §3.8; Dashboard/Review/Plan/Apply screens per UX-SPEC Part A §3; purge gate modal; settings sheet v0. **Platform: M3 keeps Windows on the portable baseline** — `ignore::WalkParallel` walker, std path resolution; no Windows-specific UI work [11 §5] | full flow usable in the GUI (09-10 课堂展示) |
 | **M4** agent + NL policy + token/cost | `agent/`, `policy/`, `config/` | `config.toml` full (R3); NL policy compiler v1; sans-IO `AgentRun` + 6 tools + chokepoint + leak test; usage/cost accounting + budget interrupt; trajectory screen. **Platform: M4 keeps Windows on the portable baseline** (same as M3); Windows `AtomicMove`/`VolumeInfo` impls (`FileRenameInfoEx`, `dwVolumeSerialNumber`, junction rules) land behind `#[cfg(windows)]` only when CI can exercise them [09 §delta][11 §1/§4] | "腾出 25GB" runs end-to-end under budget |
-| **M5** polish | docs, demo, hardening | demo = product video (Screen Studio/Hyperframes) + live preview (D-21/D-22); AI-log per-milestone export to `docs/ai-logs/M<N>-<date>.md` (D-19); 开销明细表 with standard columns (date / model / calls / prompt+completion tokens / cost USD+CNY) generated from ledger `budget` recs, budget-rec `model` field per D-20; README; SPEC.md final sync; threshold tuning (SPEC Part A §7); edge-case hardening list from §7 | 9/10 presentation |
+| **M5** polish | docs, demo, hardening | demo = product video (Screen Studio/Hyperframes) + live preview (D-21/D-22); AI-log per-milestone export to `docs/ai-logs/M<N>-<date>.md` (D-19); 开销明细表 with standard columns (date / model / calls / prompt+completion tokens / cost USD+CNY) generated from ledger `budget` recs, budget-rec `model` field per D-20; README; SPEC.md final sync; threshold tuning (SPEC Part A §7); edge-case hardening list from §7 | 09-10 课堂展示 |
 
 Dependency notes:
 
