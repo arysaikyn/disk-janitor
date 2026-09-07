@@ -10,8 +10,8 @@
 **Status snapshot (2026-09-07):** design 100% · implementation 0% (M1 awaits owner go) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-30
 confirmed (Round 4 landed 09-01) · 9/1 design comments: review & submit.
-**Evidence base:** `research/` — 20 verified notes (01–13 verified at source; 14–20 landed
-09-01, 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
+**Evidence base:** `research/` — 21 verified notes (01–13 verified at source; 14–20 landed
+09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
 
 **Pre-merge citation map** (existing references stay valid):
 
@@ -265,13 +265,15 @@ vault/restore UX, failure catalog, platform parity, brand/audit) with owner deci
 D-23…D-30 (brand coinage, one-tap auto-mark set, vault tab, collision default, typed-gate
 placement, error-catalog appendix, parity copy, countdown clock). Implementation (M1)
 awaits the owner's go. On 09-07 the ADR line-review pass completed — all 17 ADRs
-owner-stamped (13/14/16/17/18 confirmed as written).
+owner-stamped (13/14/16/17/18 confirmed as written); research note 21 (DaisyDisk
+design-principle extraction, why-it-feels-good) landed same day — its scope-changing
+candidates deliberately left unspec'd by owner call.
 
 ## Where we are (2026-09-07)
 
 | Phase | Status |
 |---|---|
-| Research (20 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01 (15/17/19 vendor-URL re-verify queued, note-flagged) |
+| Research (21 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged) |
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) · ⏳ visual mockups open |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |

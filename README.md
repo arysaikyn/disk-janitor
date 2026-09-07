@@ -5,7 +5,7 @@ lets you undo everything.** Native macOS/Windows/Linux desktop app (Tauri + Rust
 Course project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026
 summer term — built as a real product first.
 
-**Status: design complete (20 research notes, 17/17 ADRs owner-stamped, full UX spec) —
+**Status: design complete (21 research notes, 17/17 ADRs owner-stamped, full UX spec) —
 implementation 0% — M1 awaits the owner's go.** Start reading at
 [`docs/SPEC.md`](docs/SPEC.md) (Part A = overview).
 
@@ -35,7 +35,7 @@ locations or black-box verdicts. Disk Janitor:
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | **the single source of truth** — Part A product & vision · Part B technical design · Part C UX design · Part D dependencies · status & milestones |
 | [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs (every architectural decision + owner verdicts) + the 22-decision grill register as appendix |
-| [`docs/research/`](docs/research/) | 13 verified research notes + `archive/` (competitor survey) — immutable evidence, cited as [NN] |
+| [`docs/research/`](docs/research/) | 21 verified research notes + `archive/` (competitor survey) — immutable evidence, cited as [NN] |
 
 Read SPEC.md top-to-bottom once; after that it's the reference you grep.
 
