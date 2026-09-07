@@ -7,9 +7,9 @@
 > Course: 程序设计训练（Rust 语言）(30240522-3), THU CS. Keep this file in sync with the
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
-**Status snapshot (2026-09-01):** design 100% · implementation 0% (M1 awaits owner go) ·
-5 ADRs (13/14/16/17/18) await owner line-review · decisions D-01…D-30 confirmed (Round 4
-landed 09-01) · 9/1 design comments: review & submit.
+**Status snapshot (2026-09-07):** design 100% · implementation 0% (M1 awaits owner go) ·
+ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-30
+confirmed (Round 4 landed 09-01) · 9/1 design comments: review & submit.
 **Evidence base:** `research/` — 20 verified notes (01–13 verified at source; 14–20 landed
 09-01, 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
 
@@ -39,7 +39,7 @@ landed 09-01) · 9/1 design comments: review & submit.
   ## 7. Open questions / risks (owner flagged these as gut-feel)
   ## 8. Explicit non-goals
   ## History
-  ## Where we are (2026-08-31)
+  ## Where we are (2026-09-07)
 - **Part B — Technical design**
   ## 1. Overview
   ## 2. System architecture
@@ -264,14 +264,15 @@ landed 09-01 (notes 14–20: space-discovery UX, one-tap receipts, protected fol
 vault/restore UX, failure catalog, platform parity, brand/audit) with owner decisions
 D-23…D-30 (brand coinage, one-tap auto-mark set, vault tab, collision default, typed-gate
 placement, error-catalog appendix, parity copy, countdown clock). Implementation (M1)
-awaits the owner's go.
+awaits the owner's go. On 09-07 the ADR line-review pass completed — all 17 ADRs
+owner-stamped (13/14/16/17/18 confirmed as written).
 
-## Where we are (2026-08-31)
+## Where we are (2026-09-07)
 
 | Phase | Status |
 |---|---|
 | Research (20 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01 (15/17/19 vendor-URL re-verify queued, note-flagged) |
-| Architecture (17 ADRs) | ✅ 12 owner-stamped · ⏳ 5 awaiting owner line-review (13/14/16/17/18) |
+| Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) · ⏳ visual mockups open |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |
 | Demo video + 9/10 presentation | ❌ not started (competitor research ready, note 13) |

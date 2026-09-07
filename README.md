@@ -5,8 +5,9 @@ lets you undo everything.** Native macOS/Windows/Linux desktop app (Tauri + Rust
 Course project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026
 summer term — built as a real product first.
 
-**Status: design complete (13 research notes, 17 ADRs, full UX spec) — implementation
-starts at M1.** Start reading at [`docs/SPEC.md`](docs/SPEC.md) (Part A = overview).
+**Status: design complete (20 research notes, 17/17 ADRs owner-stamped, full UX spec) —
+implementation 0% — M1 awaits the owner's go.** Start reading at
+[`docs/SPEC.md`](docs/SPEC.md) (Part A = overview).
 
 ## Why this exists
 
