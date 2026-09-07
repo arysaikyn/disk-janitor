@@ -34,7 +34,7 @@ locations or black-box verdicts. Disk Janitor:
 | Doc | Contents |
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | **the single source of truth** — Part A product & vision · Part B technical design · Part C UX design · Part D dependencies · status & milestones |
-| [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs (every architectural decision + owner verdicts) + the 22-decision grill register as appendix |
+| [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs (every architectural decision + owner verdicts) + the D-01…D-30 decision register as appendix |
 | [`docs/research/`](docs/research/) | 21 verified research notes + `archive/` (competitor survey) — immutable evidence, cited as [NN] |
 
 Read SPEC.md top-to-bottom once; after that it's the reference you grep.

@@ -25,6 +25,21 @@ before proposing or writing anything; its top (Part A) is the project overview.*
    `.env.example` documents the shape. The spec requires the LLM never sees paths or
    filenames — keep it that way in any prompt/code touching the model.
 
+## Session-start contract (read-time drift check)
+
+A fresh session trusts the front door; a stale one propagates. Before ANY work:
+
+1. **Freshness** — SPEC.md's status snapshot carries a date. If it predates the newest
+   commit, or is over 2 days old, the docs are stale: diff `git log` since the snapshot
+   and re-sync before proceeding.
+2. **Counts agree** — note/ADR/decision counts appear in ≥4 places (SPEC snapshot,
+   SPEC Where-we-are table, SPEC History, README status + doc table). Grep the exact
+   count; if any copy disagrees, fix all before trusting any.
+3. **One fact, one grep, one commit** — after any docs-state change (new note, decision,
+   stamp, milestone): grep every occurrence of the changed fact, update all copies AND
+   the project memory summary (`memory://root/memory_summary.md`) in the same pass,
+   commit once. Never "update later".
+
 ## Conventions
 
 - Branches: `agent/<short-desc>`; conventional commits (`feat:`, `fix:`, `docs:`…).

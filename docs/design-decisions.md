@@ -838,7 +838,8 @@ those five texts; every substantive decision was owner-answered in the register.
 
 # Appendix — Decision register (2026-08-31 grill, owner-confirmed)
 
-> 22 owner decisions (D-01…D-22); the 'docs to amend' column cites pre-merge file names — see the citation map at the top of this file.
+> Decision register D-01…D-30 (22 from the 08-31 grill; D-23…D-30 added by wave 2, 09-01);
+> the 'docs to amend' column cites pre-merge file names — see the citation map at the top of this file.
 
 Format: ID | decision | owner answer (verbatim or paraphrased) | docs to amend
 
