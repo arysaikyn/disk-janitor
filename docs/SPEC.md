@@ -9,8 +9,10 @@
 
 **Status snapshot (2026-09-08):** design 100% · implementation 0% (M1 awaits owner go) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-30
-confirmed (Round 4 landed 09-01) · course calendar corrected 09-08 against the official
-教学日历 — no 9/1-comments or 9/6-demo rounds exist; remaining course event: 09-10 课堂展示.
+confirmed (Round 4 landed 09-01) · course deadlines re-verified 09-08 against the official
+作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
+public-demo post · 9.8 try-3-works feedback (**due today 23:59**) · 9.10 课堂展示 · 9.13
+final submission. R1–R6 mapping verified verbatim against the rubric.
 **Evidence base:** `research/` — 21 verified notes (01–13 verified at source; 14–20 landed
 09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
 
@@ -36,7 +38,7 @@ confirmed (Round 4 landed 09-01) · course calendar corrected 09-08 against the 
   ## 3. Scenario customizations (course mandate: ≥2)
   ## 4. Architecture sketch
   ## 5. R1–R6 mapping (功能完整性, 30 pts)
-  ## 6. Milestones (course calendar: 09-08 习题课·任务研讨 → 09-10 课堂展示)
+  ## 6. Milestones (course deadlines: 9.1 comments · 9.6 public demo · 9.8 try-3 · 9.10 展示 · 9.13 submission)
   ## 7. Open questions / risks (owner flagged these as gut-feel)
   ## 8. Explicit non-goals
   ## History
@@ -216,7 +218,7 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 | R5 context/history | JSONL ledger + session save/load; agent-loop trajectory visible in App (Ledger screen) |
 | R6 tokens & cost | per-call usage captured → running cost at configured prices; budget ⇒ interrupt |
 
-## 6. Milestones (official 教学日历, verified 09-08: 09-08 习题课·任务研讨; 09-10 课堂展示 — the only remaining course event)
+## 6. Milestones (official 作业要求, re-verified 09-08: 9.1 ≥3 选题评论 · 9.6 公开展示帖 · 9.8 ≥3 作品试用反馈 · 9.10 课堂展示 5'+2' · 9.13 23:59 提交)
 
 - M0 scaffold — repo, agent files, spec (this commit).
 - M1 scan + classify core w/ fixture-tree tests.
@@ -273,11 +275,17 @@ placement, error-catalog appendix, parity copy, countdown clock). Implementation
 awaits the owner's go. On 09-07 the ADR line-review pass completed — all 17 ADRs
 owner-stamped (13/14/16/17/18 confirmed as written); research note 21 (DaisyDisk
 design-principle extraction, why-it-feels-good) landed same day — its scope-changing
-candidates deliberately left unspec'd by owner call. On 09-08 the course calendar was
-corrected against the official 教学日历 (no 9/1-comments or 9/6-demo rounds; only
-09-08 习题课·任务研讨 and 09-10 课堂展示 remain) and the UI/UX gap closed: interactive
-visual mockup of all screens landed at `docs/mockups/` (visual language: calm dark
-navy, bilingual CN-primary, grade colors per §3.1; verified in-browser).
+candidates deliberately left unspec'd by owner call. On 09-08 the UI/UX gap closed:
+interactive visual mockup of all screens landed at `docs/mockups/` (visual language:
+calm dark navy, bilingual CN-primary, grade colors per §3.1; verified in-browser).
+Review screen reworked to exception-centered (owner pick after ADHD ideation + competitor
+research); EN brand frozen as **Giveback** (D-23); provisional tuning defaults locked
+(mtime 10 min / 72 h grace / 50 MB). Same day the course 作业要求 was read at source
+(`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): the 9.1/9.6/9.8 dates are
+**real deliverable deadlines** (选题评论 · 公开展示帖 · 试用反馈), 9.10 is the 课堂展示
+(5'+2'), 9.13 23:59 is the final submission; R1–R6 verified verbatim; the earlier
+"phantom deadlines" correction (09-08, 5046475) was itself wrong — it read only the
+教学日历, which lists class sessions, not the assignment spec.
 
 ## Where we are (2026-09-08)
 
@@ -287,8 +295,8 @@ navy, bilingual CN-primary, grade colors per §3.1; verified in-browser).
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
 | **Implementation** | ❌ **0% — starts at M1 on owner's go** |
-| **09-10 课堂展示** (presentation + 展示报告; 项目 = 50%) | ❌ not started (competitor research ready, note 13) |
-| 09-08 习题课·任务研讨 (today) | ✅ 需求分析/design docs ready for discussion |
+| **09-10 课堂展示** (5 min demo + 2 min Q&A; 25 pts) | ⚠ prep not started — competitor/presentation research ready (note 13) |
+| **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ **due today** — verify posted; 09-06 public-demo post status also needs check |
 
 
 # Part B — Technical design
@@ -1080,7 +1088,7 @@ Invariants worth testing:
 
 ## 8. Build sequencing
 
-Course calendar (official 教学日历, corrected 09-08): 09-08 习题课·任务研讨; 09-10 课堂展示 — the only remaining course event [SPEC Part A §6].
+Course deadlines (official 作业要求, re-verified 09-08): 9.1 ≥3 选题评论 · 9.6 公开展示帖 · 9.8 ≥3 作品试用反馈 · 9.10 课堂展示 · 9.13 23:59 提交 [SPEC Part A §6].
 
 | Milestone | Scope | Concrete work items | Exit criterion |
 |---|---|---|---|
