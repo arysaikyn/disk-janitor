@@ -3,696 +3,630 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>还我磁盘 — 交互视觉稿 visual mockup</title>
+<title>还我磁盘 Giveback — 视觉稿 visual mockup</title>
 <style>
+  /* ════════════════════════════════════════════════════════════════
+     还我磁盘 Giveback — design language v2 (2026-09-08)
+     One hero visual per screen · type-driven hierarchy · numbers not
+     sentences · color = grade data only · single-language mode (zh/en)
+     ════════════════════════════════════════════════════════════════ */
   :root {
-    --bg: #0d1117;
-    --surface: #141a23;
-    --surface-2: #1a222d;
-    --surface-3: #202a37;
-    --border: #26303d;
-    --border-soft: #1e2733;
-    --fg: #e7ecf2;
-    --fg-dim: #9aa6b4;
-    --fg-faint: #6b7686;
-    --accent: #0a84ff;
-    --accent-press: #0071e3;
-    --green: #30d158;
-    --teal: #40c8b0;
-    --blue: #64b5f6;
-    --amber: #ffb340;
-    --red: #ff6b6b;
+    /* palette — calm deep navy, one accent (restore teal) */
+    --bg:        #0c1118;   /* window */
+    --bg-deep:   #090d13;   /* hero stage */
+    --surface:   #121823;   /* panels */
+    --surface-2: #1a2230;   /* hover / inset */
+    --hairline:  #1e2836;   /* separators */
+    --hairline-2:#2a3547;   /* stronger */
+    --ink:       #e8edf4;   /* primary text */
+    --ink-2:     #9aa7b8;   /* secondary */
+    --ink-3:     #5d6a7d;   /* tertiary / labels */
+    --accent:    #43c6a8;   /* restore teal — the brand color */
+    --accent-dim:#2a7a6a;
+    /* grade colors — used ONLY for data, never decoration */
+    --g-pure:  #34c77b;
+    --g-rebuild:#43c6a8;
+    --g-redl:  #5aa7e8;
+    --g-expensive:#e8a33d;
+    --g-hands: #e05d5d;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", sans-serif;
-    --radius: 10px;
-    --shadow: 0 12px 40px rgba(0,0,0,.35);
+    --r-lg: 16px;
+    --r-md: 10px;
+    --r-sm: 6px;
   }
   html[data-theme="light"] {
-    --bg: #f5f6f8;
-    --surface: #ffffff;
-    --surface-2: #f0f2f5;
-    --surface-3: #e7eaef;
-    --border: #d7dce3;
-    --border-soft: #e3e7ec;
-    --fg: #1b2330;
-    --fg-dim: #5b6675;
-    --fg-faint: #8b94a1;
-    --shadow: 0 12px 40px rgba(20,30,50,.12);
+    --bg:#f4f6f9; --bg-deep:#eceff4; --surface:#ffffff; --surface-2:#f0f2f6;
+    --hairline:#e2e6ec; --hairline-2:#cdd4de; --ink:#16202d; --ink-2:#55627a; --ink-3:#8b97ab;
+    --accent:#0f9d7e; --accent-dim:#0b6b56;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: var(--sans);
-    background: var(--bg);
-    color: var(--fg);
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-    font-size: 14px;
-    overflow: hidden;
+    font-family: var(--sans); background: var(--bg); color: var(--ink);
+    font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+    overflow: hidden; text-rendering: optimizeLegibility;
   }
-  button { font-family: inherit; cursor: pointer; }
+  button { font-family: inherit; cursor: pointer; color: inherit; }
 
-  /* ── window chrome ─────────────────────────────── */
-  .window {
-    display: flex; flex-direction: column;
-    height: 100vh; width: 100vw;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    overflow: hidden;
-  }
+  /* ── chrome ─────────────────────────────────────────────────── */
+  .window { display: flex; flex-direction: column; height: 100vh; width: 100vw; background: var(--bg); }
   .titlebar {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 14px 8px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border-soft);
-    -webkit-app-region: drag;
-    flex-shrink: 0;
+    display: flex; align-items: center; gap: 14px; height: 46px; flex-shrink: 0;
+    padding: 0 16px 0 18px; -webkit-app-region: drag;
+    border-bottom: 1px solid var(--hairline);
   }
   .traffic { display: flex; gap: 8px; }
   .traffic span { width: 12px; height: 12px; border-radius: 50%; }
-  .traffic .r { background: #ff5f57; } .traffic .y { background: #febc2e; } .traffic .g { background: #28c840; }
-  .brand { display: flex; align-items: baseline; gap: 8px; font-weight: 600; font-size: 13px; }
-  .brand .en { color: var(--fg-faint); font-weight: 400; font-size: 11px; letter-spacing: .4px; }
-  .titlebar-spacer { flex: 1; }
-  .agent-toggle {
-    display: flex; align-items: center; gap: 6px;
-    background: var(--surface-2); color: var(--fg-dim);
-    border: 1px solid var(--border); border-radius: 7px;
-    padding: 4px 10px; font-size: 12px;
+  .traffic .r{background:#ff5f57}.traffic .y{background:#febc2e}.traffic .g{background:#28c840}
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; letter-spacing: .1px; }
+  .brand-mark { width: 18px; height: 18px; }
+  .brand .en { color: var(--ink-3); font-weight: 500; font-size: 11px; }
+  .titlebar .spacer { flex: 1; }
+
+  /* language switcher — one language at a time */
+  .lang { display: flex; align-items: center; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 7px; padding: 2px; }
+  .lang button {
+    border: none; background: transparent; color: var(--ink-3);
+    font-size: 11px; padding: 3px 10px; border-radius: 5px;
   }
-  .agent-toggle:hover { color: var(--fg); }
-  .kbd {
-    font-family: var(--mono); font-size: 10px; color: var(--fg-faint);
-    border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
-  }
+  .lang button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 
   .body { display: flex; flex: 1; min-height: 0; }
 
-  /* ── sidebar ───────────────────────────────────── */
+  /* sidebar — quiet, icon-first */
   .sidebar {
-    width: 172px; flex-shrink: 0;
-    background: var(--surface);
-    border-right: 1px solid var(--border-soft);
-    padding: 12px 8px;
+    width: 152px; flex-shrink: 0; padding: 10px 8px;
+    border-right: 1px solid var(--hairline);
     display: flex; flex-direction: column; gap: 2px;
   }
   .nav-item {
-    display: flex; flex-direction: column; align-items: flex-start; gap: 0;
-    padding: 7px 12px; border-radius: 8px;
-    border: none; background: transparent; color: var(--fg-dim);
-    text-align: left; font-size: 13px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border: none; background: transparent;
+    border-radius: var(--r-sm); color: var(--ink-2); font-size: 13px; text-align: left;
   }
-  .nav-item .en { font-size: 10px; color: var(--fg-faint); letter-spacing: .3px; }
-  .nav-item:hover { background: var(--surface-2); color: var(--fg); }
-  .nav-item.active { background: var(--surface-3); color: var(--fg); }
-  .nav-item.active .en { color: var(--fg-dim); }
-  .sidebar-foot { margin-top: auto; padding: 8px 12px; font-size: 11px; color: var(--fg-faint); line-height: 1.6; }
+  .nav-item .ic { width: 16px; text-align: center; font-size: 13px; opacity: .8; }
+  .nav-item:hover { color: var(--ink); background: var(--surface-2); }
+  .nav-item.active { color: var(--ink); background: var(--surface-2); }
+  .sidebar-foot { margin-top: auto; padding: 10px 10px 6px; font-size: 10px; color: var(--ink-3); line-height: 1.7; }
 
-  /* ── content ───────────────────────────────────── */
-  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
-  .screen { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 22px 26px; }
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+  .screen { display: none; flex: 1; min-height: 0; overflow-y: auto; }
   .screen.active { display: flex; flex-direction: column; }
 
-  .screen-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; flex-shrink: 0; }
-  .screen-head h1 { font-size: 20px; font-weight: 650; letter-spacing: -.2px; }
-  .screen-head .sub { color: var(--fg-dim); font-size: 13px; }
+  /* type scale — one display voice for data */
+  .screen-head { display: flex; align-items: baseline; gap: 12px; padding: 20px 28px 14px; flex-shrink: 0; }
+  .screen-head h1 { font-size: 15px; font-weight: 600; letter-spacing: -.1px; }
+  .screen-head .sub { font-size: 12px; color: var(--ink-3); }
+  .screen-head .spacer { flex: 1; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-  /* Dashboard */
-  .vol-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 20px 22px; margin-bottom: 16px;
+  /* ── Dashboard ── */
+  .dash { padding: 0 28px 28px; display: flex; flex-direction: column; gap: 22px; }
+  .vol-block { display: flex; align-items: center; gap: 28px; }
+  .vol-name { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .vol-name .tag { font-size: 10px; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 4px; padding: 1px 6px; margin-left: 8px; font-weight: 500; }
+  .vol-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .vol-bar > div { height: 100%; background: var(--accent); border-radius: 3px; opacity: .85; }
+  .vol-free { font-size: 12px; color: var(--ink-3); }
+
+  .hero {
+    position: relative; background: var(--bg-deep); border: 1px solid var(--hairline);
+    border-radius: var(--r-lg); padding: 26px 30px;
+    display: flex; align-items: center; gap: 34px;
   }
-  .vol-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; margin-bottom: 14px; }
-  .vol-title .writable { font-size: 11px; color: var(--teal); border: 1px solid rgba(64,200,176,.4); border-radius: 5px; padding: 1px 7px; font-weight: 400; }
-  .bar { height: 10px; border-radius: 6px; background: var(--surface-3); overflow: hidden; margin: 10px 0 8px; }
-  .bar > div { height: 100%; background: linear-gradient(90deg, #0a84ff, #40c8b0); border-radius: 6px; }
-  .vol-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 12px; }
-  .stat .label { font-size: 11px; color: var(--fg-dim); margin-bottom: 2px; }
-  .stat .value { font-size: 17px; font-weight: 650; font-family: var(--mono); letter-spacing: -.3px; }
-  .stat .note { font-size: 11px; color: var(--fg-faint); }
-  .scan-summary { display: flex; gap: 26px; padding: 14px 22px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 18px; align-items: baseline; flex-wrap: wrap; }
-  .scan-summary .stat .value { font-size: 15px; }
-  .hero-zero { color: var(--green); }
-  .cta-row { display: flex; gap: 12px; align-items: center; }
+  .hero-ring { position: relative; width: 120px; height: 120px; flex-shrink: 0; }
+  .hero-ring svg { transform: rotate(-90deg); }
+  .hero-ring .bg-ring { stroke: var(--surface-2); }
+  .hero-ring .fg-ring { stroke: var(--accent); }
+  .hero-ring .core { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .hero-ring .core .pct { font-size: 20px; font-weight: 650; font-family: var(--mono); }
+  .hero-ring .core .lbl { font-size: 9px; color: var(--ink-3); }
+  .hero-nums { display: flex; flex-direction: column; gap: 6px; }
+  .hero-nums .big { font-size: 34px; font-weight: 700; font-family: var(--mono); letter-spacing: -1.5px; color: var(--ink); }
+  .hero-nums .big .unit { font-size: 15px; color: var(--ink-3); font-weight: 500; letter-spacing: 0; }
+  .hero-nums .row2 { display: flex; gap: 18px; font-size: 12px; color: var(--ink-2); }
+  .hero-nums .row2 .ok { color: var(--accent); }
+  .hero-actions { margin-left: auto; display: flex; flex-direction: column; gap: 8px; }
+
   .btn {
-    border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 550;
-    background: var(--surface-3); color: var(--fg);
+    border: none; border-radius: var(--r-md); padding: 9px 18px; font-size: 13px; font-weight: 550;
+    background: var(--surface-2); color: var(--ink); border: 1px solid var(--hairline);
+    transition: background .12s ease;
   }
-  .btn:hover { background: var(--border); }
-  .btn.primary { background: var(--accent); color: #fff; box-shadow: 0 4px 14px rgba(10,132,255,.35); }
-  .btn.primary:hover { background: var(--accent-press); }
-  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--fg-dim); }
-  .btn.ghost:disabled { opacity: .45; cursor: default; }
-  .btn.danger { background: var(--red); color: #fff; }
-  .btn.small { padding: 4px 10px; font-size: 12px; }
-  .empty-state { text-align: center; padding: 70px 20px; color: var(--fg-dim); }
-  .empty-state .big { font-size: 17px; color: var(--fg); margin-bottom: 6px; }
-  .empty-state p { font-size: 13px; margin-bottom: 20px; }
-  .footnote { font-size: 11px; color: var(--fg-faint); margin-top: 8px; }
+  .btn:hover { background: var(--hairline-2); }
+  .btn.primary { background: var(--accent); color: #06120f; border-color: transparent; }
+  .btn.primary:hover { background: var(--accent-dim); color: #fff; }
+  .btn.ghost { background: transparent; border-color: var(--hairline); color: var(--ink-2); }
+  .btn.ghost:disabled { opacity: .4; cursor: default; }
+  .btn.small { padding: 5px 12px; font-size: 12px; border-radius: var(--r-sm); }
 
-  /* Scan */
-  .scan-wrap { display: flex; gap: 40px; align-items: center; justify-content: center; padding: 40px 0; flex: 1; }
-  .ring { position: relative; width: 190px; height: 190px; flex-shrink: 0; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: var(--r-md); overflow: hidden; }
+  .row3 > div { background: var(--surface); padding: 14px 18px; }
+  .row3 .lbl { font-size: 10px; color: var(--ink-3); text-transform: none; letter-spacing: .2px; margin-bottom: 3px; }
+  .row3 .val { font-size: 17px; font-weight: 600; font-family: var(--mono); }
+  .row3 .note { font-size: 10px; color: var(--ink-3); margin-top: 2px; }
+
+  /* ── Scan ── */
+  .scan-stage { flex: 1; display: flex; align-items: center; justify-content: center; gap: 56px; padding: 20px 40px; }
+  .ring { position: relative; width: 210px; height: 210px; flex-shrink: 0; }
   .ring svg { transform: rotate(-90deg); }
-  .ring .bg-ring { stroke: var(--surface-3); }
-  .ring .fg-ring { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .3s ease; }
-  .ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .ring-center .pct { font-size: 34px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px; }
-  .ring-center .n { font-size: 12px; color: var(--fg-dim); font-family: var(--mono); }
-  .ring-side { max-width: 320px; }
-  .ring-side .current { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); word-break: break-all; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 18px; }
-  .ring-side .rate { font-size: 20px; font-weight: 650; font-family: var(--mono); }
-  .ring-side .rate small { font-size: 12px; color: var(--fg-dim); font-weight: 400; }
-  .scan-stats { display: flex; gap: 26px; margin-top: 14px; }
+  .ring .bg-ring { stroke: var(--surface-2); }
+  .ring .fg-ring { stroke: var(--accent); stroke-linecap: round; }
+  .ring .core { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .ring .core .pct { font-size: 38px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px; }
+  .ring .core .n { font-size: 11px; color: var(--ink-3); }
+  .scan-side { display: flex; flex-direction: column; gap: 16px; min-width: 260px; }
+  .scan-side .current { font-family: var(--mono); font-size: 11px; color: var(--ink-3); word-break: break-all; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--surface); }
+  .scan-side .rate { font-size: 22px; font-weight: 650; font-family: var(--mono); }
+  .scan-side .rate small { font-size: 11px; color: var(--ink-3); font-weight: 400; margin-left: 6px; }
+  .scan-side .meta { display: flex; gap: 26px; font-size: 12px; color: var(--ink-2); }
 
-  /* Review */
-  .review-layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
-  .table-col { flex: 1.4; min-width: 0; display: flex; flex-direction: column; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
-  .toolbar .spacer { flex: 1; }
-  .cand-list { flex: 1; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-  .cand-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 14px; border-bottom: 1px solid var(--border-soft);
+  /* ── Review — exception-centered ── */
+  .review { padding: 0 28px 24px; display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; }
+  .rev-hero { display: flex; align-items: center; gap: 22px; background: var(--bg-deep); border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 20px 26px; }
+  .rev-hero .big { font-size: 40px; font-weight: 700; font-family: var(--mono); letter-spacing: -2px; }
+  .rev-hero .big .unit { font-size: 16px; color: var(--ink-3); letter-spacing: 0; }
+  .rev-hero .meta { display: flex; flex-direction: column; gap: 2px; }
+  .rev-hero .meta .l1 { font-size: 13px; font-weight: 600; }
+  .rev-hero .meta .l2 { font-size: 11px; color: var(--ink-3); }
+
+  .safe-line {
+    display: flex; align-items: center; gap: 12px; padding: 13px 18px;
+    border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--surface);
     cursor: pointer; font-size: 13px;
   }
-  .cand-row:last-child { border-bottom: none; }
-  .cand-row:hover { background: var(--surface-2); }
-  .cand-row.selected { background: var(--surface-3); box-shadow: inset 3px 0 0 var(--accent); }
-  .cand-row .check { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border); flex-shrink: 0; display: grid; place-items: center; }
-  .cand-row .check.on { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 11px; }
-  .cand-row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
-  .cand-row.refused { cursor: default; }
-  .cand-row.refused .check { border-color: var(--border-soft); background: var(--surface-2); }
-  .cand-row.refused .path { color: var(--fg-dim); }
-  .cand-row .bytes { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
-  .cand-row .regen { font-size: 11px; color: var(--fg-faint); flex-shrink: 0; }
+  .safe-line:hover { background: var(--surface-2); }
+  .safe-line .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--g-pure); box-shadow: 0 0 0 3px rgba(52,199,123,.12); }
+  .safe-line .lbl { color: var(--ink-2); }
+  .safe-line .lbl b { color: var(--ink); font-weight: 600; }
+  .safe-line .chev { margin-left: auto; color: var(--ink-3); font-size: 10px; transition: transform .15s ease; }
+  .safe-line .chev.open { transform: rotate(180deg); }
+  .safe-drawer { display: none; border: 1px solid var(--hairline); border-top: none; border-radius: 0 0 var(--r-md) var(--r-md); background: var(--surface); padding: 4px 18px 10px; }
+  .safe-drawer.open { display: block; }
+  .sd-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--hairline); font-size: 12px; }
+  .sd-row:last-child { border-bottom: none; }
+  .sd-path { flex: 1; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+  .sd-bytes { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 
-  .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 550; flex-shrink: 0; white-space: nowrap; }
-  .badge .en { opacity: .75; font-weight: 400; }
-  .b-green { background: rgba(48,209,88,.14); color: var(--green); }
-  .b-teal { background: rgba(64,200,176,.14); color: var(--teal); }
-  .b-blue { background: rgba(100,181,246,.14); color: var(--blue); }
-  .b-amber { background: rgba(255,179,64,.14); color: var(--amber); }
-  .b-red { background: rgba(255,107,107,.14); color: var(--red); }
+  .judge-head { display: flex; align-items: baseline; gap: 10px; font-size: 13px; font-weight: 600; padding: 2px 2px 0; }
+  .judge-head .n { font-size: 11px; color: var(--ink-3); font-weight: 400; }
 
-  .evidence-col { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; }
-  .evidence-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-  .evidence-panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: baseline; gap: 8px; }
-  .evidence-panel h3 .en { font-size: 11px; color: var(--fg-faint); font-weight: 400; }
-  .ev-row { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); font-size: 12px; }
-  .ev-row:last-child { border-bottom: none; }
-  .ev-num { color: var(--fg-faint); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
-  .ev-row .detail { color: var(--fg); }
-  .ev-row .kind { color: var(--fg-dim); }
-  .ev-row .strength { margin-left: auto; font-size: 10px; color: var(--teal); flex-shrink: 0; }
-  .regen-line { margin-top: 12px; background: var(--surface-2); border-radius: 7px; padding: 8px 10px; font-size: 12px; }
-  .regen-line .cmd { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
-  .table-foot { margin-top: 10px; font-size: 12px; color: var(--fg-dim); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-
-  /* Review — exception-centered */
-  .review-hero { display: flex; gap: 18px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 14px; }
-  .rh-num { font-size: 40px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px; color: var(--teal); flex-shrink: 0; }
-  .rh-copy .rh-title { font-size: 16px; font-weight: 650; margin-bottom: 4px; }
-  .rh-copy .rh-title .en { font-size: 12px; color: var(--fg-dim); font-weight: 400; margin-left: 6px; }
-  .rh-copy .rh-sub { font-size: 13px; color: var(--fg-dim); }
-  .rh-copy .rh-sub .en { font-size: 11px; }
-  .already-safe { display: flex; align-items: center; gap: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 8px; cursor: pointer; }
-  .already-safe:hover { border-color: var(--border); background: var(--surface-3); }
-  .already-safe .as-left { display: flex; gap: 8px; }
-  .already-safe .as-mid { flex: 1; font-size: 13px; }
-  .already-safe .as-mid .en { font-size: 11px; color: var(--fg-faint); margin-left: 8px; }
-  .already-safe .as-right { font-size: 12px; color: var(--fg-dim); }
-  .already-safe .chev { display: inline-block; transition: transform .15s ease; }
-  .already-safe .chev.open { transform: rotate(180deg); }
-  .safe-drawer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 14px 10px; margin-bottom: 16px; }
-  .sd-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-soft); font-size: 12px; }
-  .sd-row:last-of-type { border-bottom: none; }
-  .sd-path { flex: 1; font-family: var(--mono); color: var(--fg-dim); }
-  .sd-bytes { font-family: var(--mono); color: var(--fg-dim); }
-  .sd-note { font-size: 11px; color: var(--fg-faint); padding-top: 6px; }
-  .judgment-head { font-size: 14px; margin: 6px 0 10px; display: flex; align-items: baseline; gap: 8px; }
-  .judgment-head .en { font-size: 11px; color: var(--fg-faint); font-weight: 400; }
-  .judge-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
-  .judge-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); cursor: pointer; font-size: 13px; }
+  .judge-list { border: 1px solid var(--hairline); border-radius: var(--r-md); overflow: hidden; background: var(--surface); }
+  .judge-row { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--hairline); cursor: pointer; }
   .judge-row:last-child { border-bottom: none; }
   .judge-row:hover { background: var(--surface-2); }
-  .judge-row.open { background: var(--surface-3); }
-  .jr-toggle { width: 14px; text-align: center; color: var(--fg-faint); }
-  .jr-toggle .chev { display: inline-block; transition: transform .15s ease; }
-  .jr-toggle .chev.open { transform: rotate(90deg); }
+  .gdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .g-pure{background:var(--g-pure)} .g-rebuild{background:var(--g-rebuild)} .g-redl{background:var(--g-redl)}
+  .g-expensive{background:var(--g-expensive)} .g-hands{background:var(--g-hands)}
+  .grade-word { font-size: 11px; color: var(--ink-2); width: 84px; flex-shrink: 0; }
   .jr-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
-  .jr-bytes { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
-  .jr-action { flex-shrink: 0; }
-  .jr-action.included { background: var(--teal); color: #06231d; border-color: transparent; }
-  .jr-refuse { flex-shrink: 0; font-size: 11px; color: var(--fg-faint); }
-  .jr-detail { display: none; padding: 8px 14px 12px 38px; background: var(--surface-2); border-bottom: 1px solid var(--border-soft); }
-  .jr-detail .ev-row { border-bottom: 1px solid var(--border-soft); }
+  .jr-bytes { font-family: var(--mono); font-size: 12px; color: var(--ink-2); flex-shrink: 0; }
+  .jr-refuse { font-size: 11px; color: var(--ink-3); flex-shrink: 0; }
+  .jr-detail { display: none; padding: 10px 18px 14px 56px; background: var(--bg-deep); border-bottom: 1px solid var(--hairline); }
   .jr-detail.open { display: block; }
+  .ev { display: flex; gap: 10px; font-size: 12px; padding: 3px 0; color: var(--ink-2); }
+  .ev .k { color: var(--ink-3); font-size: 11px; flex-shrink: 0; }
+  .ev .v { color: var(--ink); }
+  .ev .s { margin-left: auto; font-size: 10px; color: var(--ink-3); flex-shrink: 0; }
+  .jr-detail .regen { font-size: 11px; color: var(--ink-3); margin-top: 6px; font-family: var(--mono); }
 
-  /* Degraded states */
-  .tcc-banner { display: flex; gap: 14px; align-items: flex-start; background: rgba(255,179,64,.08); border: 1px solid rgba(255,179,64,.4); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
-  .tcc-banner .tb-icon { font-size: 18px; }
-  .tcc-banner .tb-title { font-weight: 650; font-size: 13px; margin-bottom: 3px; }
-  .tcc-banner .tb-body { font-size: 12px; color: var(--fg-dim); margin-bottom: 10px; }
-  .tcc-banner .tb-body .mono { color: var(--fg); }
-  .tcc-banner .tb-actions { display: flex; gap: 8px; }
-  .unreadable-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); font-size: 13px; background: rgba(255,107,107,.05); }
-  .unreadable-row .ur-path { flex: 1; font-family: var(--mono); font-size: 12px; color: var(--fg-dim); }
-  .unreadable-row .ur-err { font-size: 11px; color: var(--fg-faint); flex-shrink: 0; }
-  .empty-review { text-align: center; padding: 60px 20px; color: var(--fg-dim); }
-  .empty-review .big { font-size: 16px; color: var(--fg); margin-bottom: 6px; }
-  .budget-banner { background: rgba(255,179,64,.12); border: 1px solid rgba(255,179,64,.4); color: var(--amber); border-radius: 8px; padding: 10px 12px; font-size: 12px; }
-  .offline-note { background: var(--surface-2); border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--fg-dim); }
+  .rev-foot { display: flex; align-items: center; gap: 14px; padding-top: 2px; font-size: 12px; color: var(--ink-3); }
+  .rev-foot .spacer { flex: 1; }
+  .rev-foot b { color: var(--ink); font-weight: 600; }
 
-  /* Plan */
-  .plan-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px; }
-  .plan-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .plan-head .fname { font-family: var(--mono); font-size: 13px; color: var(--fg-dim); }
-  .plan-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px; }
+  /* ── Plan ── */
+  .plan { padding: 0 28px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .plan-card { border: 1px solid var(--hairline); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
+  .plan-row { display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--hairline); }
   .plan-row:last-child { border-bottom: none; }
-  .plan-row .qty { font-family: var(--mono); font-weight: 600; width: 60px; flex-shrink: 0; }
-  .plan-row .what { flex: 1; }
-  .plan-row .size { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
-  .plan-row .note { font-size: 11px; color: var(--fg-faint); flex-shrink: 0; }
-  .plan-total { display: flex; gap: 24px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); align-items: baseline; }
+  .plan-row .qty { font-family: var(--mono); font-size: 13px; font-weight: 600; width: 72px; flex-shrink: 0; }
+  .plan-row .what { flex: 1; font-size: 13px; }
+  .plan-row .what .cmd { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .plan-row .size { font-family: var(--mono); font-size: 12px; color: var(--ink-2); flex-shrink: 0; }
+  .plan-row .note { font-size: 11px; color: var(--ink-3); flex-shrink: 0; }
+  .plan-total { display: flex; align-items: baseline; gap: 20px; padding: 14px 20px; background: var(--bg-deep); }
   .plan-total .t { font-size: 15px; font-weight: 650; font-family: var(--mono); }
-  .snapshot-note { font-size: 11px; color: var(--fg-faint); margin-top: 8px; }
 
-  /* Activity */
-  .act-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border-soft); font-size: 13px; }
+  /* ── Activity ── */
+  .act-list { border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+  .act-head { display: flex; align-items: center; gap: 18px; padding: 11px 18px; background: var(--bg-deep); border-bottom: 1px solid var(--hairline); font-size: 12px; color: var(--ink-2); }
+  .act-head .spacer { flex: 1; }
+  .act-head .freed { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+  .act-row { display: flex; align-items: center; gap: 14px; padding: 11px 18px; border-bottom: 1px solid var(--hairline); font-size: 13px; }
   .act-row:last-child { border-bottom: none; }
-  .act-icon { width: 18px; text-align: center; flex-shrink: 0; }
-  .act-ok { color: var(--green); } .act-move { color: var(--accent); } .act-wait { color: var(--fg-faint); }
+  .act-ok { color: var(--g-pure); } .act-move { color: var(--accent); } .act-wait { color: var(--ink-3); }
   .act-row .path { flex: 1; font-family: var(--mono); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .act-row .size { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
-  .act-row .state { flex-shrink: 0; font-size: 12px; color: var(--fg-dim); }
-  .act-header { display: flex; gap: 24px; padding: 12px 14px; background: var(--surface-2); border-bottom: 1px solid var(--border-soft); font-size: 13px; align-items: baseline; }
-  .act-header .freed { font-family: var(--mono); color: var(--amber); font-weight: 600; }
-  .warn-banner { background: rgba(255,179,64,.1); border: 1px solid rgba(255,179,64,.35); color: var(--amber); border-radius: 8px; padding: 10px 14px; font-size: 12px; margin-bottom: 12px; }
+  .act-row .size { font-family: var(--mono); font-size: 12px; color: var(--ink-2); flex-shrink: 0; }
+  .act-row .state { flex-shrink: 0; font-size: 12px; color: var(--ink-3); }
 
-  /* Ledger */
-  .ledger-row { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border-soft); font-size: 13px; align-items: baseline; }
+  /* ── Ledger ── */
+  .ledger-list { border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--surface); overflow: hidden; flex: 1; }
+  .ledger-row { display: flex; align-items: center; gap: 14px; padding: 11px 18px; border-bottom: 1px solid var(--hairline); font-size: 13px; }
   .ledger-row:last-child { border-bottom: none; }
-  .ledger-row .id { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); flex-shrink: 0; width: 44px; }
-  .ledger-row .kind { font-family: var(--mono); font-size: 11px; flex-shrink: 0; width: 74px; }
-  .ledger-row .body { flex: 1; min-width: 0; }
-  .ledger-row .body .p1 { font-size: 13px; }
-  .ledger-row .body .p2 { font-size: 11px; color: var(--fg-dim); font-family: var(--mono); }
-  .kind-apply { color: var(--blue); } .kind-restore { color: var(--teal); } .kind-plan { color: var(--fg-dim); } .kind-purge { color: var(--red); } .kind-budget { color: var(--amber); }
+  .l-id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); width: 46px; flex-shrink: 0; }
+  .l-kind { font-family: var(--mono); font-size: 11px; width: 66px; flex-shrink: 0; }
+  .k-restore{color:var(--g-rebuild)} .k-apply{color:var(--g-redl)} .k-plan{color:var(--ink-3)} .k-purge{color:var(--g-hands)} .k-budget{color:var(--g-expensive)}
+  .l-body { flex: 1; min-width: 0; }
+  .l-p1 { font-size: 13px; }
+  .l-p2 { font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
 
-  /* Agent dock */
-  .dock {
-    width: 300px; flex-shrink: 0;
-    background: var(--surface);
-    border-left: 1px solid var(--border-soft);
-    display: flex; flex-direction: column; min-height: 0;
-  }
+  /* ── Agent dock ── */
+  .dock { width: 284px; flex-shrink: 0; border-left: 1px solid var(--hairline); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
   .dock.hidden { display: none; }
-  .dock-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); font-size: 13px; font-weight: 600; }
+  .dock-head { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--hairline); font-size: 13px; font-weight: 600; }
   .dock-head .spacer { flex: 1; }
-  .dock-close { background: none; border: none; color: var(--fg-faint); font-size: 14px; }
-  .dock-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-  .msg { font-size: 13px; max-width: 95%; }
-  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-radius: 14px 14px 4px 14px; padding: 9px 13px; }
-  .msg.agent { align-self: flex-start; background: var(--surface-2); border-radius: 14px 14px 14px 4px; padding: 9px 13px; color: var(--fg); }
-  .plan-card-mini { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface-2); }
-  .plan-card-mini .name { font-family: var(--mono); font-size: 12px; margin-bottom: 6px; }
-  .plan-card-mini .meta { font-size: 12px; color: var(--fg-dim); margin-bottom: 10px; }
-  .dock-foot { border-top: 1px solid var(--border-soft); padding: 10px 14px; font-size: 11px; color: var(--fg-faint); display: flex; justify-content: space-between; }
-  .dock-foot .cost { font-family: var(--mono); color: var(--amber); }
+  .dock-close { background: none; border: none; color: var(--ink-3); font-size: 13px; }
+  .dock-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { font-size: 12px; max-width: 96%; line-height: 1.55; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #06120f; border-radius: 12px 12px 4px 12px; padding: 8px 12px; font-weight: 500; }
+  .msg.agent { align-self: flex-start; background: var(--surface-2); border-radius: 12px 12px 12px 4px; padding: 8px 12px; color: var(--ink); }
+  .plan-mini { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 12px 14px; background: var(--bg-deep); }
+  .plan-mini .name { font-family: var(--mono); font-size: 11px; color: var(--ink-2); margin-bottom: 4px; }
+  .plan-mini .meta { font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+  .plan-mini .meta b { color: var(--ink); }
+  .dock-foot { border-top: 1px solid var(--hairline); padding: 10px 16px; font-size: 10px; color: var(--ink-3); display: flex; justify-content: space-between; }
+  .dock-foot .cost { font-family: var(--mono); color: var(--g-expensive); }
 
-  /* Settings sheet */
-  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 50; align-items: center; justify-content: center; }
-  .overlay.show { display: flex; }
-  .sheet { width: 560px; max-height: 84vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 20px 24px; }
-  .sheet h2 { font-size: 16px; margin-bottom: 16px; display: flex; align-items: baseline; gap: 8px; }
-  .sheet h2 .en { font-size: 12px; color: var(--fg-faint); font-weight: 400; }
-  .field-group { margin-bottom: 16px; }
-  .field-group > label { font-size: 12px; font-weight: 600; color: var(--fg-dim); display: block; margin-bottom: 8px; }
-  .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
-  .field label { flex: 0 0 120px; color: var(--fg-dim); font-size: 12px; }
-  .field input[type=text], .field select { flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; color: var(--fg); font-size: 13px; font-family: var(--mono); }
-  .field .unit { color: var(--fg-faint); font-size: 12px; }
-  .sheet-foot { display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
-  .radio-row { display: flex; gap: 18px; font-size: 13px; }
-  .radio-row label { display: flex; gap: 6px; align-items: center; color: var(--fg); }
-  .privacy-note { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--fg-dim); }
+  /* degraded */
+  .tcc-banner { display: flex; gap: 14px; align-items: flex-start; border: 1px solid rgba(232,163,61,.4); background: rgba(232,163,61,.07); border-radius: var(--r-md); padding: 14px 18px; margin-bottom: 14px; }
+  .tcc-banner .tb-title { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  .tcc-banner .tb-body { font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+  .tcc-banner .tb-body .mono { font-family: var(--mono); }
+  .tcc-banner .tb-actions { display: flex; gap: 8px; }
+  .empty-review { text-align: center; padding: 70px 20px; color: var(--ink-2); }
+  .empty-review .big { font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+  .budget-banner { border: 1px solid rgba(232,163,61,.4); color: var(--g-expensive); border-radius: var(--r-md); padding: 10px 12px; font-size: 12px; }
+  .offline-note { border: 1px dashed var(--hairline-2); border-radius: var(--r-md); padding: 10px 12px; font-size: 12px; color: var(--ink-3); }
 
-  /* Purge gate */
-  .gate { width: 460px; }
-  .gate h2 { font-size: 16px; margin-bottom: 8px; }
-  .gate .sub { font-size: 13px; color: var(--fg-dim); margin-bottom: 16px; }
-  .gate .amount { font-size: 26px; font-weight: 700; font-family: var(--mono); text-align: center; margin: 10px 0 4px; }
-  .gate .type-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
-  .gate .type-row input { flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--fg); font-family: var(--mono); font-size: 15px; }
-  .gate .type-row input.match { border-color: var(--red); box-shadow: 0 0 0 3px rgba(255,107,107,.15); }
-  .gate .gate-warn { background: rgba(255,107,107,.1); border: 1px solid rgba(255,107,107,.35); color: var(--red); border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 12px; }
-
-  .tag { display: inline-block; background: var(--surface-3); border-radius: 5px; padding: 1px 7px; font-size: 11px; color: var(--fg-dim); }
-  .muted { color: var(--fg-dim); }
-  .faint { color: var(--fg-faint); }
-  .mono { font-family: var(--mono); }
-  .divider { height: 1px; background: var(--border-soft); margin: 12px 0; }
+  /* tooltip-like help — hover, never on surface */
+  .hint { border-bottom: 1px dotted var(--hairline-2); cursor: help; }
 </style>
 </head>
 <body>
 <div class="window">
 
-  <!-- titlebar -->
+  <!-- titlebar: chrome + brand + language switcher -->
   <div class="titlebar">
     <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
-    <div class="brand">还我磁盘 <span class="en">Giveback · 还我 = give it back</span></div>
-    <div class="titlebar-spacer"></div>
-    <button class="agent-toggle" id="agentToggle">⌘J <span>助手 Agent</span></button>
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none">
+        <path d="M5 12a7 7 0 1 1 2.05 4.95" stroke="#43c6a8" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M4 8v4h4" stroke="#43c6a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="14.5" y="9" width="2.6" height="2.6" rx=".7" fill="#e8edf4"/>
+        <rect x="14.5" y="13" width="4.2" height="2.6" rx=".7" fill="#e8edf4" opacity=".55"/>
+        <rect x="14.5" y="17" width="3" height="2.6" rx=".7" fill="#e8edf4" opacity=".3"/>
+      </svg>
+      <span data-i18n="brand">还我磁盘</span><span class="en" data-i18n="brand_en">Giveback</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="lang" id="langSwitch">
+      <button class="on" data-lang="zh" onclick="setLang('zh')">中</button>
+      <button data-lang="en" onclick="setLang('en')">EN</button>
+    </div>
   </div>
 
   <div class="body">
     <!-- sidebar -->
     <nav class="sidebar">
-      <button class="nav-item active" data-screen="dashboard"><span>仪表盘 Dashboard</span></button>
-      <button class="nav-item" data-screen="review"><span>审核 Review</span></button>
-      <button class="nav-item" data-screen="ledger"><span>台账 Ledger</span></button>
-      <button class="nav-item" data-screen="settings-open" id="navSettings"><span>设置 Settings</span></button>
-      <div class="sidebar-foot">零遥测 Zero telemetry · 无账号 no account<br>扫描只读元数据 Scans read metadata only</div>
+      <button class="nav-item active" data-screen="dashboard"><span class="ic">◈</span><span data-i18n="nav_dash">仪表盘</span></button>
+      <button class="nav-item" data-screen="review"><span class="ic">◉</span><span data-i18n="nav_review">审核</span></button>
+      <button class="nav-item" data-screen="ledger"><span class="ic">≡</span><span data-i18n="nav_ledger">台账</span></button>
+      <button class="nav-item" id="navSettings"><span class="ic">⚙</span><span data-i18n="nav_settings">设置</span></button>
+      <div class="sidebar-foot" data-i18n="sidebar_foot">零遥测 · 无账号<br>扫描只读元数据</div>
     </nav>
 
-    <!-- content -->
     <main class="content">
 
       <!-- ── Dashboard ── -->
       <section class="screen active" id="screen-dashboard">
-        <div class="screen-head"><h1>仪表盘 Dashboard</h1><span class="sub">今天还你多少空间 · how much back today</span></div>
-
-        <div class="vol-card">
-          <div class="vol-title">Macintosh HD · APFS <span class="writable">可写 writable</span></div>
-          <div class="vol-stats">
-            <div class="stat"><div class="label">已用 Used</div><div class="value">612.4 GB</div><div class="note">/ 1 TB</div></div>
-            <div class="stat"><div class="label">真实可用 Free (raw)</div><div class="value">387.6 GB</div></div>
-            <div class="stat"><div class="label">快照锁定 Snapshot-held</div><div class="value">13.6 GB <span class="note">¹</span></div></div>
+        <div class="dash">
+          <div class="vol-block">
+            <div class="vol-name">Macintosh HD <span class="tag" data-i18n="writable">可写</span></div>
+            <div class="vol-bar"><div style="width:62%"></div></div>
+            <div class="vol-free num">387.6 GB <span data-i18n="free">可用</span></div>
           </div>
-          <div class="bar"><div style="width:62%"></div></div>
-        </div>
 
-        <div class="scan-summary">
-          <div class="stat"><div class="label">上次扫描 Last scan</div><div class="value">今天 14:32</div><div class="note">1,204,553 文件 files</div></div>
-          <div class="stat"><div class="label">可回收 Recoverable</div><div class="value" style="color:var(--teal)">19.3 GB</div><div class="note">214 项 candidates</div></div>
-          <div class="stat"><div class="label">已销毁 Destroyed</div><div class="value hero-zero">0</div><div class="note">直到你确认 until you confirm</div></div>
-        </div>
-
-        <div class="cta-row">
-          <button class="btn primary" onclick="goto('scan')">开始扫描 Start scan</button>
-          <button class="btn ghost" disabled title="扫描后可用 enabled after a scan">一键清理 One-tap clean</button>
-        </div>
-        <div class="footnote">¹ Time Machine 本地快照锁定的空间，过期后释放 freed after snapshot expiry</div>
-
-        <div class="tcc-banner" id="tccBanner" style="display:none">
-          <div class="tb-icon">⚠</div>
-          <div>
-            <div class="tb-title">macOS 需要授权 macOS needs permission for ~/Library</div>
-            <div class="tb-body">证据 evidence: probe returned <span class="mono">EPERM</span>（系统设置 ▸ 隐私与安全性 ▸ 文件与文件夹
-              <span class="en">System Settings ▸ Privacy &amp; Security ▸ Files</span>）</div>
-            <div class="tb-actions">
-              <button class="btn small" style="background:var(--accent);color:#fff">打开系统设置 Open Settings</button>
-              <button class="btn ghost small" onclick="hideTcc()">排除并继续 Exclude &amp; continue</button>
-              <button class="btn ghost small">重试 Retry</button>
+          <div class="hero">
+            <div class="hero-ring">
+              <svg width="120" height="120" viewBox="0 0 120 120">
+                <circle class="bg-ring" cx="60" cy="60" r="52" fill="none" stroke-width="9"/>
+                <circle class="fg-ring" cx="60" cy="60" r="52" fill="none" stroke-width="9"
+                        stroke-dasharray="326.7" stroke-dashoffset="120.9"/>
+              </svg>
+              <div class="core"><div class="pct">63%</div><div class="lbl" data-i18n="scanned">已扫描</div></div>
+            </div>
+            <div class="hero-nums">
+              <div class="big">19.3 <span class="unit" data-i18n="gb">GB</span> <span style="font-size:13px;color:var(--ink-2)" data-i18n="reclaimable">可回收</span></div>
+              <div class="row2"><span class="num ok">0 <span data-i18n="destroyed">已销毁</span></span><span class="num">214 <span data-i18n="candidates">项</span></span><span class="num" data-i18n="last_scan">今天 14:32</span></div>
+            </div>
+            <div class="hero-actions">
+              <button class="btn primary" onclick="goto('scan')" data-i18n="scan_btn">开始扫描</button>
+              <button class="btn ghost" disabled data-i18n="onetap_btn">一键清理</button>
             </div>
           </div>
-        </div>
 
-        <div id="emptyState" class="empty-state" style="display:none">
-          <div class="big">还没有扫描记录 No scans yet.</div>
-          <p>扫描只读元数据，文件不会离开你的 Mac。<br>Scans read metadata only — nothing leaves this Mac.</p>
-          <button class="btn primary" onclick="goto('scan')">开始第一次扫描 Start first scan</button>
+          <div class="tcc-banner" id="tccBanner" style="display:none">
+            <div>⚠</div>
+            <div>
+              <div class="tb-title" data-i18n="tcc_title">macOS 需要授权才能读取 ~/Library</div>
+              <div class="tb-body" data-i18n="tcc_body">证据 <span class="mono">EPERM</span> — 系统设置 ▸ 隐私与安全性 ▸ 文件与文件夹</div>
+              <div class="tb-actions">
+                <button class="btn small" style="background:var(--accent);color:#06120f" data-i18n="tcc_open">打开系统设置</button>
+                <button class="btn ghost small" onclick="hideTcc()" data-i18n="tcc_exclude">排除并继续</button>
+                <button class="btn ghost small" data-i18n="tcc_retry">重试</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row3">
+            <div><div class="lbl" data-i18n="used">已用</div><div class="val num">612.4 GB</div><div class="note">/ 1 TB</div></div>
+            <div><div class="lbl" data-i18n="raw_free">真实可用</div><div class="val num">387.6 GB</div></div>
+            <div><div class="lbl" data-i18n="snapshot">快照锁定 <span class="hint" data-i18n="snap_hint">¹</span></div><div class="val num">13.6 GB</div></div>
+          </div>
         </div>
       </section>
 
       <!-- ── Scan ── -->
       <section class="screen" id="screen-scan">
-        <div class="screen-head"><h1>扫描 Scan</h1><span class="sub mono">~/ (Macintosh HD)</span><span class="spacer" style="flex:1"></span><button class="btn ghost small">更改目标 Change target</button></div>
-        <div class="scan-wrap">
+        <div class="screen-head"><h1 data-i18n="scan_title">扫描</h1><span class="sub num">~/ (Macintosh HD)</span><span class="spacer"></span><button class="btn ghost small" data-i18n="change_target">更改目标</button></div>
+        <div class="scan-stage">
           <div class="ring">
-            <svg width="190" height="190" viewBox="0 0 190 190">
-              <circle class="bg-ring" cx="95" cy="95" r="82" fill="none" stroke-width="12"/>
-              <circle class="fg-ring" id="ringArc" cx="95" cy="95" r="82" fill="none" stroke-width="12"
-                      stroke-dasharray="515.2" stroke-dashoffset="190.6"/>
+            <svg width="210" height="210" viewBox="0 0 210 210">
+              <circle class="bg-ring" cx="105" cy="105" r="92" fill="none" stroke-width="13"/>
+              <circle class="fg-ring" id="ringArc" cx="105" cy="105" r="92" fill="none" stroke-width="13"
+                      stroke-dasharray="578" stroke-dashoffset="213.9"/>
             </svg>
-            <div class="ring-center"><div class="pct">63%</div><div class="n">812,443 项 items</div></div>
+            <div class="core"><div class="pct">63%</div><div class="n num">812,443</div></div>
           </div>
-          <div class="ring-side">
-            <div class="current">当前 current: ~/Library/Developer/Xcode/DerivedData/…</div>
-            <div class="rate">1.21 GiB/s <small>扫描速率 scan rate</small></div>
-            <div class="scan-stats">
-              <div class="stat"><div class="label">候选 Candidates</div><div class="value">214</div><div class="note">19.1 GB</div></div>
-              <div class="stat"><div class="label">根错误 Root errs</div><div class="value" style="color:var(--amber)">2</div><div class="note">跳过并继续 skip &amp; continue</div></div>
+          <div class="scan-side">
+            <div class="current">~/Library/Developer/Xcode/DerivedData/…</div>
+            <div class="rate">1.21 <small data-i18n="gibs">GiB/s</small></div>
+            <div class="meta">
+              <span class="num">214 <span data-i18n="candidates">项</span></span>
+              <span class="num" style="color:var(--g-expensive)">2 <span data-i18n="root_errs">根错误</span></span>
             </div>
-            <div style="margin-top:24px"><button class="btn ghost" onclick="goto('dashboard')">取消 Cancel</button>
-            <span class="faint" style="font-size:11px;margin-left:10px">中断 = 丢弃未完成批次，保留已完成 interrupt drops incomplete</span></div>
+            <div style="margin-top:6px"><button class="btn ghost" onclick="goto('dashboard')" data-i18n="cancel">取消</button></div>
           </div>
         </div>
       </section>
 
       <!-- ── Review ── -->
       <section class="screen" id="screen-review">
-        <div class="screen-head"><h1>审核 Review</h1><span class="sub">19.3 GB 可回收 recoverable · 0 已销毁 until you confirm</span></div>
-
-        <div class="review-hero">
-          <div class="rh-num">19.3 GB</div>
-          <div class="rh-copy">
-            <div class="rh-title">大部分已经安全 — 只需你确认 4 项 <span class="en">mostly safe — just confirm the rest</span></div>
-            <div class="rh-sub">214 项中 210 项有明确证据判定为安全可回收。剩下 4 项需要你的判断。
-              <span class="en">210 of 214 carry clear evidence they're safe. 4 need your judgment.</span></div>
-          </div>
-        </div>
-
-        <div class="already-safe" onclick="toggleSafeDrawer()">
-          <div class="as-left">
-            <span class="badge b-green">● 纯缓存 Pure cache</span>
-            <span class="badge b-teal">● 可重建 Rebuildable</span>
-          </div>
-          <div class="as-mid">
-            <b>210 项 · 17.1 GB 已安全判定</b>
-            <span class="en">already judged safe — pre-selected</span>
-          </div>
-          <div class="as-right">看证据 see evidence <span class="chev" id="safeChev">▾</span></div>
-        </div>
-        <div class="safe-drawer" id="safeDrawer" style="display:none">
-          <div class="sd-row"><span class="badge b-teal">● 可重建 Rebuildable</span><span class="sd-path">~/code/api/node_modules</span><span class="sd-bytes">2.1 GB</span></div>
-          <div class="sd-row"><span class="badge b-teal">● 可重建 Rebuildable</span><span class="sd-path">~/Library/Developer/Xcode/DerivedData</span><span class="sd-bytes">6.8 GB</span></div>
-          <div class="sd-row"><span class="badge b-green">● 纯缓存 Pure cache</span><span class="sd-path">~/.npm/_cacache</span><span class="sd-bytes">3.2 GB</span></div>
-          <div class="sd-row"><span class="badge b-green">● 纯缓存 Pure cache</span><span class="sd-path">~/Library/Caches/Homebrew</span><span class="sd-bytes">4.1 GB</span></div>
-          <div class="sd-note">+206 更多 · 证据按需展开 · evidence on demand — nothing hidden</div>
-        </div>
-
-        <div class="judgment-head"><b>需要你判断 Needs your judgment</b><span class="en">· 4 项 · 1.9 GB</span></div>
-
-        <div class="judge-list">
-          <div class="judge-row" onclick="toggleJudge(this)">
-            <div class="jr-toggle"><span class="chev">▸</span></div>
-            <span class="badge b-amber">⚠ 代价高 Expensive</span>
-            <span class="jr-path">~/code/api/node_modules/.cache</span>
-            <span class="jr-bytes">1.4 GB</span>
-            <button class="btn ghost small jr-action" onclick="event.stopPropagation();optIn(this)">纳入 Include</button>
-          </div>
-          <div class="jr-detail" style="display:none">
-            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">mtime 冷却 cool:</span> <span class="detail">12 h</span></span><span class="strength">中 mid</span></div>
-            <div class="ev-row"><span class="ev-num">②</span><span><span class="kind">锁文件 lockfile:</span> <span class="detail">package-lock.json 缺失 missing</span></span><span class="strength">弱 weak</span></div>
-            <div class="regen-line">重建 Rebuild: <span class="cmd">npm ci ≈ 6 min</span> · 网络 network: 需要 yes · 手动纳入 per-entry opt-in</div>
+        <div class="review">
+          <div class="rev-hero">
+            <div class="big num">19.3 <span class="unit" data-i18n="gb">GB</span></div>
+            <div class="meta">
+              <div class="l1" data-i18n="rev_l1">210 项已安全判定，4 项待你确认</div>
+              <div class="l2 num" data-i18n="rev_l2">0 已销毁 · 72 h 宽限</div>
+            </div>
           </div>
 
-          <div class="judge-row" onclick="toggleJudge(this)">
-            <div class="jr-toggle"><span class="chev">▸</span></div>
-            <span class="badge b-red">🔒 请勿动手 Hands off</span>
-            <span class="jr-path">~/code/api/node_modules/…</span>
-            <span class="jr-bytes">—</span>
-            <span class="jr-refuse">已拒绝 refused</span>
+          <div class="safe-line" onclick="toggleSafe()">
+            <span class="dot"></span>
+            <span class="lbl" data-i18n="safe_lbl"><b>17.1 GB</b> 已安全判定</span>
+            <span class="chev" id="safeChev">▾</span>
           </div>
-          <div class="jr-detail" style="display:none">
-            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">正在写入 actively written:</span> <span class="detail">mtime 4 min ago</span></span><span class="strength">强 strong</span></div>
-            <div class="regen-line">判定 REFUSED 拒绝 · 替代 alternative: 稍后重扫 rescan later — never auto-included</div>
-          </div>
-
-          <div class="judge-row" onclick="toggleJudge(this)">
-            <div class="jr-toggle"><span class="chev">▸</span></div>
-            <span class="badge b-red">🔒 请勿动手 Hands off</span>
-            <span class="jr-path">~/code/orphan-project/</span>
-            <span class="jr-bytes">512 MB</span>
-            <span class="jr-refuse">孤儿树 orphan</span>
-          </div>
-          <div class="jr-detail" style="display:none">
-            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">项目已删除? project deleted?:</span> <span class="detail">no package.json in any ancestor</span></span><span class="strength">强 strong</span></div>
-            <div class="regen-line">判定 REFUSED 拒绝 · 替代 alternative: 手动确认后单独处理 review manually — never auto-included</div>
+          <div class="safe-drawer" id="safeDrawer">
+            <div class="sd-row"><span class="gdot g-rebuild"></span><span class="sd-path">~/code/api/node_modules</span><span class="sd-bytes num">2.1 GB</span></div>
+            <div class="sd-row"><span class="gdot g-rebuild"></span><span class="sd-path">~/Library/Developer/Xcode/DerivedData</span><span class="sd-bytes num">6.8 GB</span></div>
+            <div class="sd-row"><span class="gdot g-pure"></span><span class="sd-path">~/.npm/_cacache</span><span class="sd-bytes num">3.2 GB</span></div>
+            <div class="sd-row"><span class="gdot g-pure"></span><span class="sd-path">~/Library/Caches/Homebrew</span><span class="sd-bytes num">4.1 GB</span></div>
+            <div class="sd-row"><span class="sd-path" style="color:var(--ink-3)" data-i18n="safe_more">+ 206 项 · 证据按需展开</span></div>
           </div>
 
-          <div class="judge-row" onclick="toggleJudge(this)">
-            <div class="jr-toggle"><span class="chev">▸</span></div>
-            <span class="badge b-amber">⚠ 代价高 Expensive</span>
-            <span class="jr-path">~/Docker/containers/…</span>
-            <span class="jr-bytes">500 MB</span>
-            <button class="btn ghost small jr-action" onclick="event.stopPropagation();optIn(this)">纳入 Include</button>
-          </div>
-          <div class="jr-detail" style="display:none">
-            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">可重建 Rebuildable:</span> <span class="detail">镜像 layer 缓存 layer cache</span></span><span class="strength">中 mid</span></div>
-            <div class="regen-line">重建 Rebuild: <span class="cmd">docker pull ≈ 4 min</span> · 网络 network: 需要 yes · 手动纳入 per-entry opt-in</div>
-          </div>
-          <div class="judge-row" onclick="toggleJudge(this)">
-            <div class="jr-toggle"><span class="chev">▸</span></div>
-            <span class="badge b-red">🔒 请勿动手 Hands off</span>
-            <span class="jr-path">~/Docker/containers/…</span>
-            <span class="jr-bytes">—</span>
-            <span class="jr-refuse">正在写入 actively written</span>
-          </div>
-          <div class="jr-detail" style="display:none">
-            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">证据不可读 evidence unreadable:</span> <span class="detail">probe EPERM on ancestor</span></span><span class="strength">—</span></div>
-            <div class="regen-line">判定 REFUSED 拒绝 · 替代 alternative: 排除该根 exclude root — never auto-included</div>
-          </div>
-        </div>
+          <div class="judge-head" data-i18n="judge_head">需要你确认</div>
 
-        <div class="empty-review" id="emptyReview" style="display:none">
-          <div class="big">扫描完成 — 没有值得回收的东西。Scan complete — nothing worth reclaiming.</div>
-          <p>这本身就是好消息。That is good news.</p>
-        </div>
+          <div class="judge-list" id="judgeList">
+            <div class="judge-row" onclick="toggleJudge(this)">
+              <span class="gdot g-expensive"></span><span class="grade-word" data-i18n="g_expensive">代价高</span>
+              <span class="jr-path">~/code/api/node_modules/.cache</span><span class="jr-bytes num">1.4 GB</span>
+              <button class="btn small" onclick="event.stopPropagation();optIn(this)" data-i18n="include">纳入</button>
+            </div>
+            <div class="jr-detail">
+              <div class="ev"><span class="k" data-i18n="ev_mtime">mtime</span><span class="v">12 h</span><span class="s" data-i18n="mid">中</span></div>
+              <div class="ev"><span class="k" data-i18n="ev_lock">锁文件</span><span class="v" data-i18n="ev_lock_missing">缺失</span><span class="s" data-i18n="weak">弱</span></div>
+              <div class="regen">npm ci ≈ 6 min</div>
+            </div>
 
-        <div class="table-foot"><span>已选 selected: <b id="reviewSelCount">210 + 0</b> 项 · 19.3 GB · 0 已销毁</span><span class="spacer" style="flex:1"></span>
-          <button class="btn ghost small">在访达中显示 Reveal</button>
-          <button class="btn primary small" onclick="goto('plan')">生成计划 Build plan</button>
+            <div class="judge-row" onclick="toggleJudge(this)">
+              <span class="gdot g-hands"></span><span class="grade-word" data-i18n="g_hands">请勿动手</span>
+              <span class="jr-path">~/code/api/node_modules/…</span><span class="jr-bytes num">—</span>
+              <span class="jr-refuse" data-i18n="refused">已拒绝</span>
+            </div>
+            <div class="jr-detail">
+              <div class="ev"><span class="k" data-i18n="ev_write">正在写入</span><span class="v">mtime 4 min ago</span><span class="s" data-i18n="strong">强</span></div>
+              <div class="regen" data-i18n="alt_rescan">替代：稍后重扫</div>
+            </div>
+
+            <div class="judge-row" onclick="toggleJudge(this)">
+              <span class="gdot g-hands"></span><span class="grade-word" data-i18n="g_hands">请勿动手</span>
+              <span class="jr-path">~/code/orphan-project/</span><span class="jr-bytes num">512 MB</span>
+              <span class="jr-refuse" data-i18n="orphan">孤儿树</span>
+            </div>
+            <div class="jr-detail">
+              <div class="ev"><span class="k" data-i18n="ev_orphan">项目已删除?</span><span class="v" data-i18n="ev_orphan_v">无 package.json</span><span class="s" data-i18n="strong">强</span></div>
+              <div class="regen" data-i18n="alt_manual">替代：手动确认</div>
+            </div>
+
+            <div class="judge-row" onclick="toggleJudge(this)">
+              <span class="gdot g-expensive"></span><span class="grade-word" data-i18n="g_expensive">代价高</span>
+              <span class="jr-path">~/Docker/containers/…</span><span class="jr-bytes num">500 MB</span>
+              <button class="btn small" onclick="event.stopPropagation();optIn(this)" data-i18n="include">纳入</button>
+            </div>
+            <div class="jr-detail">
+              <div class="ev"><span class="k" data-i18n="ev_rebuild">可重建</span><span class="v" data-i18n="ev_layer">镜像 layer 缓存</span><span class="s" data-i18n="mid">中</span></div>
+              <div class="regen">docker pull ≈ 4 min</div>
+            </div>
+
+            <div class="judge-row" onclick="toggleJudge(this)">
+              <span class="gdot g-hands"></span><span class="grade-word" data-i18n="g_hands">请勿动手</span>
+              <span class="jr-path">~/Docker/containers/…</span><span class="jr-bytes num">—</span>
+              <span class="jr-refuse" data-i18n="refused">已拒绝</span>
+            </div>
+            <div class="jr-detail">
+              <div class="ev"><span class="k" data-i18n="ev_unreadable">证据不可读</span><span class="v mono">EPERM</span></div>
+              <div class="regen" data-i18n="alt_exclude">替代：排除该根</div>
+            </div>
+          </div>
+
+          <div class="empty-review" id="emptyReview" style="display:none">
+            <div class="big" data-i18n="empty_rev">扫描完成 — 没有值得回收的东西</div>
+            <p data-i18n="empty_rev2">这本身就是好消息。</p>
+          </div>
+
+          <div class="rev-foot"><span data-i18n="selected">已选</span> <b class="num" id="revSel">210 + 0</b> <span class="num">· 19.3 GB</span><span class="spacer"></span>
+            <button class="btn ghost small" data-i18n="reveal">在访达中显示</button>
+            <button class="btn primary small" onclick="goto('plan')" data-i18n="build_plan">生成计划</button>
+          </div>
         </div>
       </section>
 
-
       <!-- ── Plan ── -->
       <section class="screen" id="screen-plan">
-        <div class="screen-head"><h1>计划 Plan</h1><span class="sub mono">plan-20260831-1432.json</span><span class="spacer" style="flex:1"></span><button class="btn ghost small">查看 JSON View manifest</button></div>
-        <div class="plan-card">
-          <div class="plan-head"><b>操作 Actions</b></div>
-          <div class="plan-row"><span class="qty">11 × 隔离</span><span class="what">Quarantine</span><span class="size">5.4 GiB</span><span class="note">进入隔离区，0 字节释放 0 bytes freed</span></div>
-          <div class="plan-row"><span class="qty">2 × 执行清理</span><span class="what">Prune · docker system prune / brew cleanup --prune=90d</span><span class="size">1.6 GiB</span><span class="note">dry-run 预览 previewed</span></div>
-          <div class="plan-row"><span class="qty">3 × 拒绝</span><span class="what">Refused</span><span class="size">—</span><span class="note">⚠ 孤儿树 orphan ×1 · ⚠ mtime ×2</span></div>
-          <div class="plan-total"><span class="t">合计 Total (去重 dedup) 19.3 GB</span><span class="t faint">72 h 宽限 grace</span></div>
-          <div class="snapshot-note">快照注意 Snapshot note: 13.6 GB 在快照过期后才真正释放 freed only after TM snapshot expiry</div>
-        </div>
-        <div class="cta-row">
-          <button class="btn primary" onclick="goto('activity')">应用 — 隔离 Apply — quarantine</button>
-          <span class="faint" style="font-size:12px">软确认 soft gate：可直接 Enter · 可恢复 reversible</span>
+        <div class="screen-head"><h1 data-i18n="plan_title">计划</h1><span class="sub num">plan-20260831-1432</span><span class="spacer"></span><button class="btn ghost small" data-i18n="view_json">查看 JSON</button></div>
+        <div class="plan">
+          <div class="plan-card">
+            <div class="plan-row"><span class="qty num">11 ×</span><span class="what" data-i18n="quarantine">隔离</span><span class="size num">5.4 GiB</span><span class="note num" data-i18n="freed_zero">0 字节释放</span></div>
+            <div class="plan-row"><span class="qty num">2 ×</span><span class="what"><span data-i18n="prune">执行清理</span> <span class="cmd">docker system prune · brew cleanup --prune=90d</span></span><span class="size num">1.6 GiB</span></div>
+            <div class="plan-row"><span class="qty num">3 ×</span><span class="what" data-i18n="refused">拒绝</span><span class="size num">—</span><span class="note" data-i18n="refuse_note">孤儿 ×1 · mtime ×2</span></div>
+            <div class="plan-total"><span class="t num">19.3 GB <span style="font-size:11px;color:var(--ink-3)" data-i18n="dedup">去重</span></span><span class="t" style="font-size:12px;color:var(--ink-3)" data-i18n="grace">72 h 宽限</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <button class="btn primary" onclick="goto('activity')" data-i18n="apply_btn">应用 — 隔离</button>
+            <span class="hint" style="font-size:12px;color:var(--ink-3)" data-i18n="apply_hint">软确认 · 可恢复</span>
+          </div>
         </div>
       </section>
 
       <!-- ── Activity ── -->
       <section class="screen" id="screen-activity">
-        <div class="screen-head"><h1>活动 Activity</h1><span class="sub">隔离中 quarantining · plan-20260831-1432</span></div>
-        <div class="warn-banner" id="resumeBanner" style="display:none">已恢复中断的操作 resumed interrupted operation · WAL 已记录 WAL-recorded, auto-resumes</div>
-        <div class="plan-card" style="padding:0;overflow:hidden">
-          <div class="act-header"><span>进度 progress</span><span class="spacer" style="flex:1"></span><span>3/13 · 已移动 moved 12.1 GB</span><span class="freed">释放 freed 0 字节 bytes</span></div>
-          <div class="act-row"><span class="act-icon act-ok">✓</span><span class="path">~/code/api/node_modules</span><span class="size">2.1 GB</span><span class="state">隔离 quarantined</span></div>
-          <div class="act-row"><span class="act-icon act-ok">✓</span><span class="path">~/Library/Developer/Xcode/DerivedData</span><span class="size">6.8 GB</span><span class="state">隔离 quarantined</span></div>
-          <div class="act-row"><span class="act-icon act-move">⟳</span><span class="path">~/.npm/_cacache</span><span class="size">3.2 GB</span><span class="state">移动中 moving…</span></div>
-          <div class="act-row"><span class="act-icon act-wait">○</span><span class="path">docker system prune</span><span class="size">—</span><span class="state">等待 pending</span></div>
-        </div>
-        <div class="cta-row" style="margin-top:14px">
-          <button class="btn ghost" onclick="goto('plan')">取消 Cancel</button>
-          <span class="faint" style="font-size:11px">中断安全：WAL 已记录，重启自动续跑 WAL-recorded, auto-resumes next launch</span>
+        <div class="screen-head"><h1 data-i18n="activity_title">活动</h1><span class="sub" data-i18n="quarantining">隔离中 · plan-20260831-1432</span></div>
+        <div class="plan" style="flex:1">
+          <div class="act-list">
+            <div class="act-head"><span data-i18n="progress">进度</span><span class="spacer"></span><span class="num">3/13 · 12.1 GB</span><span class="freed num" data-i18n="freed_live">释放 0 字节</span></div>
+            <div class="act-row"><span class="act-ok">✓</span><span class="path">~/code/api/node_modules</span><span class="size num">2.1 GB</span><span class="state" data-i18n="quarantined">已隔离</span></div>
+            <div class="act-row"><span class="act-ok">✓</span><span class="path">~/Library/Developer/Xcode/DerivedData</span><span class="size num">6.8 GB</span><span class="state" data-i18n="quarantined">已隔离</span></div>
+            <div class="act-row"><span class="act-move">⟳</span><span class="path">~/.npm/_cacache</span><span class="size num">3.2 GB</span><span class="state" data-i18n="moving">移动中</span></div>
+            <div class="act-row"><span class="act-wait">○</span><span class="path">docker system prune</span><span class="size num">—</span><span class="state" data-i18n="pending">等待</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <button class="btn ghost" onclick="goto('plan')" data-i18n="cancel">取消</button>
+            <span class="hint" style="font-size:12px;color:var(--ink-3)" data-i18n="cancel_hint">中断安全：WAL 已记录，重启自动续跑</span>
+          </div>
         </div>
       </section>
 
       <!-- ── Ledger ── -->
       <section class="screen" id="screen-ledger">
-        <div class="screen-head"><h1>台账 Ledger</h1><span class="sub">1,204 条 records</span><span class="spacer" style="flex:1"></span>
-          <button class="btn ghost small">筛选 kind ▾</button><button class="btn ghost small">导出 Export JSONL</button>
-        </div>
-        <div class="cand-list" style="flex:1">
-          <div class="ledger-row"><span class="id">#842</span><span class="kind kind-restore">restore</span>
-            <div class="body"><div class="p1">✓ 已恢复 restored — DerivedData → ~/Library/Developer/…</div><div class="p2">undoes #815 · 宽限 grace 余 69 h</div></div></div>
-          <div class="ledger-row"><span class="id">#815</span><span class="kind kind-apply">apply</span>
-            <div class="body"><div class="p1">✓ 隔离 quarantined — DerivedData · 2.1 GB</div><div class="p2">plan-20260831-1432</div></div>
-            <button class="btn ghost small">恢复 Restore…</button></div>
-          <div class="ledger-row"><span class="id">#812</span><span class="kind kind-plan">plan</span>
-            <div class="body"><div class="p1">plan-20260831-1432 (11 隔离 · 3 拒绝)</div></div></div>
-          <div class="ledger-row"><span class="id">#801</span><span class="kind kind-purge">purge</span>
-            <div class="body"><div class="p1">🔒 已销毁 destroyed — 5.4 GiB</div><div class="p2">字节数已确认 byte count confirmed: 5841673728</div></div></div>
-          <div class="ledger-row"><span class="id">#777</span><span class="kind kind-budget">budget</span>
-            <div class="body"><div class="p1">deepseek-chat · 12 calls</div><div class="p2">$0.0031</div></div></div>
+        <div class="screen-head"><h1 data-i18n="ledger_title">台账</h1><span class="sub num">1,204 条</span><span class="spacer"></span>
+          <button class="btn ghost small" data-i18n="export">导出 JSONL</button></div>
+        <div class="plan" style="flex:1">
+          <div class="ledger-list">
+            <div class="ledger-row"><span class="l-id num">#842</span><span class="l-kind k-restore">restore</span>
+              <div class="l-body"><div class="l-p1">DerivedData → ~/Library/Developer/…</div><div class="l-p2">undoes #815 · 宽限 69 h</div></div>
+              <button class="btn ghost small" data-i18n="restore">恢复</button></div>
+            <div class="ledger-row"><span class="l-id num">#815</span><span class="l-kind k-apply">apply</span>
+              <div class="l-body"><div class="l-p1">DerivedData · 2.1 GB</div><div class="l-p2">plan-20260831-1432</div></div></div>
+            <div class="ledger-row"><span class="l-id num">#812</span><span class="l-kind k-plan">plan</span>
+              <div class="l-body"><div class="l-p1">plan-20260831-1432 (11 隔离 · 3 拒绝)</div></div></div>
+            <div class="ledger-row" style="cursor:pointer" onclick="openGate()"><span class="l-id num">#801</span><span class="l-kind k-purge">purge</span>
+              <div class="l-body"><div class="l-p1">5.4 GiB 已销毁</div><div class="l-p2">字节数已确认 5841673728</div></div></div>
+            <div class="ledger-row"><span class="l-id num">#777</span><span class="l-kind k-budget">budget</span>
+              <div class="l-body"><div class="l-p1">deepseek-chat · 12 calls</div><div class="l-p2">$0.0031</div></div></div>
+          </div>
         </div>
       </section>
     </main>
 
     <!-- ── Agent dock ── -->
     <aside class="dock hidden" id="dock">
-      <div class="dock-head">助手 Agent <span class="spacer"></span><button class="dock-close" onclick="toggleDock()">✕</button></div>
+      <div class="dock-head">助手 <span class="spacer"></span><button class="dock-close" onclick="toggleDock()">✕</button></div>
       <div class="dock-body">
-        <div class="msg user">腾出 25 GB，别动我这两周在跑的项目</div>
-        <div class="msg agent">已生成计划 Generated plan — 只读预览 read-only preview，执行需你确认 execution needs your confirm.</div>
-        <div class="plan-card-mini">
+        <div class="msg user" data-i18n="ask">腾出 25 GB，别动我这两周在跑的项目</div>
+        <div class="plan-mini">
           <div class="name">plan-20260831-1501</div>
-          <div class="meta">11 隔离 quarantine · 2 prune · 3 拒绝 refused · <b>19.3 GB</b> (去重 dedup)</div>
-          <button class="btn small" style="width:100%" onclick="toggleDock();goto('plan')">在计划中打开 Open in Plan</button>
+          <div class="meta num">11 隔离 · 2 清理 · 3 拒绝 · <b>19.3 GB</b></div>
+          <button class="btn small" style="width:100%" onclick="toggleDock();goto('plan')" data-i18n="open_plan">在计划中打开</button>
         </div>
-        <div class="msg agent">⚠ 拒绝 refused: 2 项 mtime 热 · 证据 evidence: 正在写入 actively written · 替代 alternative: 稍后重扫 rescan later</div>
-        <div class="budget-banner" id="budgetBanner" style="display:none">已到预算上限 budget reached · 证据 evidence: $2.00 / 200k tok / 40 turns 中已触发 · 替代 alternative: 提高上限或继续本地流程 raise cap or continue locally</div>
-        <div class="offline-note" id="offlineNote" style="display:none">助手不可用 agent unreachable — 本地流程不受影响 local flow unaffected</div>
+        <div class="msg agent" data-i18n="refuse_msg">2 项 mtime 热 — 已拒绝，稍后重扫</div>
+        <div class="budget-banner" id="budgetBanner" style="display:none" data-i18n="budget_banner">已到预算上限 — 提高上限或继续本地流程</div>
+        <div class="offline-note" id="offlineNote" style="display:none" data-i18n="offline">助手不可用 — 本地流程不受影响</div>
       </div>
-      <div class="dock-foot"><span>本轮 turn: 3 · tokens 4,102</span><span class="cost">成本 cost $0.0009</span></div>
+      <div class="dock-foot"><span class="num">turn 3 · 4,102 tok</span><span class="cost num">$0.0009</span></div>
     </aside>
   </div>
 </div>
 
-<!-- ── Settings sheet ── -->
+<!-- ── Settings ── -->
 <div class="overlay" id="settingsOverlay">
   <div class="sheet">
-    <h2>设置 Settings <span class="en">⌘,</span></h2>
+    <h2 data-i18n="settings_title">设置</h2>
     <div class="field-group">
-      <label>扫描 Scan</label>
-      <div class="field"><label>默认根 roots</label><input type="text" value="~/"><button class="btn ghost small">更改 Change…</button></div>
-      <div class="field"><label>忽略 globs</label><input type="text" value="node_modules, *.log"></div>
-      <div class="field"><label>阈值 thresholds</label><input type="text" value="mtime 热区 10 min · 最小 50 MB"><button class="btn ghost small">高级 Adv</button></div>
+      <label data-i18n="scan_group">扫描</label>
+      <div class="field"><label data-i18n="roots">默认根</label><input type="text" value="~/"><button class="btn ghost small" data-i18n="change">更改</button></div>
+      <div class="field"><label data-i18n="ignores">忽略</label><input type="text" value="node_modules, *.log"></div>
+      <div class="field"><label data-i18n="thresholds">阈值</label><input type="text" value="mtime 10 min · ≥ 50 MB"></div>
     </div>
     <div class="field-group">
-      <label>助手 Agent (R3)</label>
+      <label data-i18n="agent_group">助手</label>
       <div class="field"><label>endpoint</label><input type="text" value="https://api.deepseek.com/v1"></div>
-      <div class="field"><label>模型 model</label><input type="text" value="deepseek-chat"></div>
-      <div class="field"><label>API key</label><input type="text" value="••••••••••••"><span class="unit">secrecy 存储；永不写入日志</span></div>
-      <div class="field"><label>预算 budget</label><input type="text" value="$2.00 / 200k tok / 40 turns"><span class="unit">到达即中断 interrupt at cap</span></div>
+      <div class="field"><label>model</label><input type="text" value="deepseek-chat"></div>
+      <div class="field"><label>API key</label><input type="text" value="••••••••••••"></div>
+      <div class="field"><label data-i18n="budget">预算</label><input type="text" value="$2.00 / 200k tok / 40 turns"></div>
     </div>
     <div class="field-group">
-      <label>语言 Language</label>
-      <div class="radio-row">
-        <label><input type="radio" name="lang" checked> 中文 primary</label>
-        <label><input type="radio" name="lang"> English primary</label>
-      </div>
-    </div>
-    <div class="field-group">
-      <label>外观 Appearance</label>
+      <label data-i18n="appearance">外观</label>
       <div class="radio-row" id="themeRow">
-        <label><input type="radio" name="theme" value="system" checked> 跟随系统 Follow system</label>
-        <label><input type="radio" name="theme" value="dark"> 深 Dark</label>
-        <label><input type="radio" name="theme" value="light"> 浅 Light</label>
+        <label><input type="radio" name="theme" value="system" checked data-i18n="follow_sys">跟随系统</label>
+        <label><input type="radio" name="theme" value="dark" data-i18n="dark">深色</label>
+        <label><input type="radio" name="theme" value="light" data-i18n="light">浅色</label>
       </div>
     </div>
     <div class="field-group">
-      <label>隐私 Privacy</label>
-      <div class="privacy-note">✓ 零遥测 Zero telemetry — 无账号 no account · 网络仅限 LLM 请求 network is LLM calls only</div>
+      <div class="privacy-note" data-i18n="privacy">零遥测 · 无账号 · 网络仅限 LLM 请求</div>
     </div>
-    <div class="field-group">
-      <button class="btn ghost small" style="color:var(--red);border-color:rgba(255,107,107,.4)" onclick="closeSettings()">卸载 Uninstall…</button>
-      <span class="faint" style="font-size:11px;margin-left:8px">恢复或确认每个隔离项后卸载 restore-or-confirm</span>
-    </div>
-    <div class="sheet-foot"><button class="btn ghost" onclick="closeSettings()">取消 Cancel</button><button class="btn primary" onclick="closeSettings()">保存 Save</button></div>
+    <div class="sheet-foot"><button class="btn ghost" onclick="closeSettings()" data-i18n="cancel">取消</button><button class="btn primary" onclick="closeSettings()" data-i18n="save">保存</button></div>
   </div>
 </div>
 
 <!-- ── Purge gate ── -->
 <div class="overlay" id="gateOverlay">
   <div class="sheet gate">
-    <h2>这一步不可撤销 This step cannot be undone.</h2>
-    <div class="sub">输入要销毁的精确字节数以确认 — type the exact byte count to confirm. Esc 与外键无效 Esc/outside-click are inert.</div>
-    <div class="amount">5,841,673,728 字节 bytes</div>
-    <div class="gate-warn">将永久销毁 quarantine 中的 5.4 GiB。宽限期已过，恢复不可用。Purged entries cannot be restored.</div>
-    <div class="type-row"><input id="gateInput" placeholder="5841673728" autocomplete="off"><button class="btn danger" id="gateBtn" disabled>销毁 Purge</button></div>
-    <div class="sheet-foot" style="border-top:none;padding-top:4px"><button class="btn ghost" onclick="closeGate()">取消 Cancel</button></div>
+    <h2 data-i18n="gate_title">这一步不可撤销</h2>
+    <div class="sub num" data-i18n="gate_sub">输入精确字节数以确认 — Esc 无效</div>
+    <div class="amount num">5,841,673,728</div>
+    <div class="gate-warn" data-i18n="gate_warn">将永久销毁 5.4 GiB。已过宽限期，无法恢复。</div>
+    <div class="type-row"><input id="gateInput" placeholder="5841673728" autocomplete="off"><button class="btn danger" id="gateBtn" disabled data-i18n="purge">销毁</button></div>
+    <div class="sheet-foot" style="border-top:none;padding-top:4px"><button class="btn ghost" onclick="closeGate()" data-i18n="cancel">取消</button></div>
   </div>
 </div>
 
+<style>
+  .overlay { position: fixed; inset: 0; background: rgba(4,8,13,.55); display: none; z-index: 50; align-items: center; justify-content: center; }
+  .overlay.show { display: flex; }
+  .sheet { width: 540px; max-height: 84vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.45); padding: 22px 26px; }
+  .sheet h2 { font-size: 15px; margin-bottom: 18px; }
+  .field-group { margin-bottom: 16px; }
+  .field-group > label { font-size: 11px; font-weight: 600; color: var(--ink-3); display: block; margin-bottom: 8px; }
+  .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  .field label { flex: 0 0 90px; color: var(--ink-2); font-size: 12px; }
+  .field input, .field select { flex: 1; background: var(--bg); border: 1px solid var(--hairline); border-radius: 7px; padding: 6px 10px; color: var(--ink); font-size: 12px; font-family: var(--mono); }
+  .sheet-foot { display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+  .radio-row { display: flex; gap: 16px; font-size: 13px; }
+  .radio-row label { display: flex; gap: 6px; align-items: center; color: var(--ink); }
+  .privacy-note { border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--ink-2); }
+  .gate { width: 440px; }
+  .gate h2 { font-size: 16px; margin-bottom: 8px; }
+  .gate .sub { font-size: 12px; color: var(--ink-2); margin-bottom: 14px; }
+  .gate .amount { font-size: 24px; font-weight: 700; text-align: center; margin: 10px 0 4px; }
+  .gate-warn { border: 1px solid rgba(224,93,93,.4); background: rgba(224,93,93,.08); color: var(--g-hands); border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 12px; }
+  .type-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+  .type-row input { flex: 1; background: var(--bg); border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 12px; color: var(--ink); font-family: var(--mono); font-size: 14px; }
+  .btn.danger { background: var(--g-hands); color: #fff; }
+</style>
+
 <script>
-  // screens
+  // ── screens ──
   const screens = ['dashboard','scan','review','plan','activity','ledger'];
   function goto(name){
     document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -704,10 +638,92 @@
     b.addEventListener('click', ()=>goto(b.dataset.screen));
   });
 
-  // agent dock
-  function toggleDock(){ document.getElementById('dock').classList.toggle('hidden'); }
+  // ── language switcher — one language at a time ──
+  const I18N = {
+    zh: {
+      brand:'还我磁盘', brand_en:'Giveback', nav_dash:'仪表盘', nav_review:'审核', nav_ledger:'台账',
+      nav_settings:'设置', sidebar_foot:'零遥测 · 无账号<br>扫描只读元数据', writable:'可写',
+      free:'可用', scanned:'已扫描', gb:'GB', reclaimable:'可回收', destroyed:'已销毁',
+      candidates:'项', last_scan:'今天 14:32', scan_btn:'开始扫描', onetap_btn:'一键清理',
+      used:'已用', raw_free:'真实可用', snapshot:'快照锁定', snap_hint:'TM 本地快照过期后释放',
+      scan_title:'扫描', change_target:'更改目标', gibs:'GiB/s', root_errs:'根错误', cancel:'取消',
+      rev_l1:'210 项已安全判定，4 项待你确认', rev_l2:'0 已销毁 · 72 h 宽限',
+      safe_lbl:'<b>17.1 GB</b> 已安全判定', safe_more:'+ 206 项 · 证据按需展开',
+      judge_head:'需要你确认', g_expensive:'代价高', g_hands:'请勿动手', include:'纳入',
+      ev_mtime:'mtime', ev_lock:'锁文件', ev_lock_missing:'缺失', ev_write:'正在写入',
+      ev_orphan:'项目已删除?', ev_orphan_v:'无 package.json', ev_rebuild:'可重建', ev_layer:'镜像 layer 缓存',
+      ev_unreadable:'证据不可读', refused:'已拒绝', orphan:'孤儿树', mid:'中', weak:'弱', strong:'强',
+      alt_rescan:'替代：稍后重扫', alt_manual:'替代：手动确认', alt_exclude:'替代：排除该根',
+      selected:'已选', reveal:'在访达中显示', build_plan:'生成计划',
+      plan_title:'计划', view_json:'查看 JSON', quarantine:'隔离', prune:'执行清理',
+      freed_zero:'0 字节释放', refused:'拒绝', refuse_note:'孤儿 ×1 · mtime ×2', dedup:'去重',
+      grace:'72 h 宽限', apply_btn:'应用 — 隔离', apply_hint:'软确认 · 可恢复',
+      activity_title:'活动', quarantining:'隔离中 · plan-20260831-1432', progress:'进度',
+      freed_live:'释放 0 字节', quarantined:'已隔离', moving:'移动中', pending:'等待',
+      cancel_hint:'中断安全：WAL 已记录，重启自动续跑',
+      ledger_title:'台账', export:'导出 JSONL', restore:'恢复',
+      ask:'腾出 25 GB，别动我这两周在跑的项目', open_plan:'在计划中打开',
+      refuse_msg:'2 项 mtime 热 — 已拒绝，稍后重扫',
+      budget_banner:'已到预算上限 — 提高上限或继续本地流程', offline:'助手不可用 — 本地流程不受影响',
+      settings_title:'设置', scan_group:'扫描', roots:'默认根', change:'更改', ignores:'忽略',
+      thresholds:'阈值', agent_group:'助手', budget:'预算', appearance:'外观',
+      follow_sys:'跟随系统', dark:'深色', light:'浅色', privacy:'零遥测 · 无账号 · 网络仅限 LLM 请求',
+      save:'保存', gate_title:'这一步不可撤销', gate_sub:'输入精确字节数以确认 — Esc 无效',
+      gate_warn:'将永久销毁 5.4 GiB。已过宽限期，无法恢复。', purge:'销毁',
+      tcc_title:'macOS 需要授权才能读取 ~/Library', tcc_body:'证据 EPERM — 系统设置 ▸ 隐私与安全性 ▸ 文件与文件夹',
+      tcc_open:'打开系统设置', tcc_exclude:'排除并继续', tcc_retry:'重试',
+      empty_rev:'扫描完成 — 没有值得回收的东西', empty_rev2:'这本身就是好消息。'
+    },
+    en: {
+      brand:'Giveback', brand_en:'还我磁盘', nav_dash:'Dashboard', nav_review:'Review', nav_ledger:'Ledger',
+      nav_settings:'Settings', sidebar_foot:'Zero telemetry · no account<br>Scans read metadata only', writable:'writable',
+      free:'free', scanned:'scanned', gb:'GB', reclaimable:'reclaimable', destroyed:'destroyed',
+      candidates:'candidates', last_scan:'today 14:32', scan_btn:'Start scan', onetap_btn:'One-tap clean',
+      used:'Used', raw_free:'Free (raw)', snapshot:'Snapshot-held', snap_hint:'freed after TM snapshot expiry',
+      scan_title:'Scan', change_target:'Change target', gibs:'GiB/s', root_errs:'root errs', cancel:'Cancel',
+      rev_l1:'210 items judged safe, 4 need you', rev_l2:'0 destroyed · 72 h grace',
+      safe_lbl:'<b>17.1 GB</b> judged safe', safe_more:'+ 206 more · evidence on demand',
+      judge_head:'Needs your judgment', g_expensive:'Expensive', g_hands:'Hands off', include:'Include',
+      ev_mtime:'mtime', ev_lock:'lockfile', ev_lock_missing:'missing', ev_write:'actively written',
+      ev_orphan:'project deleted?', ev_orphan_v:'no package.json', ev_rebuild:'rebuildable', ev_layer:'image layer cache',
+      ev_unreadable:'evidence unreadable', refused:'refused', orphan:'orphan', mid:'mid', weak:'weak', strong:'strong',
+      alt_rescan:'alternative: rescan later', alt_manual:'alternative: review manually', alt_exclude:'alternative: exclude root',
+      selected:'selected', reveal:'Reveal in Finder', build_plan:'Build plan',
+      plan_title:'Plan', view_json:'View JSON', quarantine:'Quarantine', prune:'Prune',
+      freed_zero:'0 bytes freed', refuse_note:'orphan ×1 · mtime ×2', dedup:'dedup',
+      grace:'72 h grace', apply_btn:'Apply — quarantine', apply_hint:'soft gate · reversible',
+      activity_title:'Activity', quarantining:'quarantining · plan-20260831-1432', progress:'progress',
+      freed_live:'freed 0 bytes', quarantined:'quarantined', moving:'moving…', pending:'pending',
+      cancel_hint:'safe to cancel: WAL-recorded, auto-resumes',
+      ledger_title:'Ledger', export:'Export JSONL', restore:'Restore',
+      ask:'Free up 25 GB, don\u2019t touch projects I\u2019m running this fortnight', open_plan:'Open in Plan',
+      refuse_msg:'2 items mtime-hot — refused, rescan later',
+      budget_banner:'Budget reached — raise cap or continue locally', offline:'Agent unreachable — local flow unaffected',
+      settings_title:'Settings', scan_group:'Scan', roots:'Default roots', change:'Change…', ignores:'Ignore globs',
+      thresholds:'Thresholds', agent_group:'Agent', budget:'Budget', appearance:'Appearance',
+      follow_sys:'Follow system', dark:'Dark', light:'Light', privacy:'Zero telemetry · no account · network is LLM calls only',
+      save:'Save', gate_title:'This cannot be undone', gate_sub:'Type the exact byte count — Esc is inert',
+      gate_warn:'Permanently destroys 5.4 GiB. Grace expired, restore unavailable.', purge:'Purge',
+      tcc_title:'macOS needs permission to read ~/Library', tcc_body:'evidence EPERM — Settings ▸ Privacy & Security ▸ Files',
+      tcc_open:'Open Settings', tcc_exclude:'Exclude & continue', tcc_retry:'Retry',
+      empty_rev:'Scan complete — nothing worth reclaiming', empty_rev2:'That is good news.'
+    }
+  };
+  function setLang(l){
+    document.documentElement.lang = l;
+    document.querySelectorAll('#langSwitch button').forEach(b=>b.classList.toggle('on', b.dataset.lang===l));
+    const t = I18N[l];
+    document.querySelectorAll('[data-i18n]').forEach(el=>{
+      const k = el.dataset.i18n;
+      if (t[k] !== undefined) el.innerHTML = t[k];
+    });
+  }
 
-  // settings
+  // ── dock ──
+  function toggleDock(){ document.getElementById('dock').classList.toggle('hidden'); }
+  document.querySelector('.dock-head .dock-close').addEventListener('click', toggleDock);
+
+  // ── settings ──
   document.getElementById('navSettings').addEventListener('click', ()=>{ document.getElementById('settingsOverlay').classList.add('show'); });
   function closeSettings(){ document.getElementById('settingsOverlay').classList.remove('show'); }
   document.getElementById('settingsOverlay').addEventListener('click', e=>{ if(e.target===e.currentTarget) closeSettings(); });
@@ -715,27 +731,20 @@
     document.documentElement.dataset.theme = r.value==='system' ? (matchMedia('(prefers-color-scheme: light)').matches?'light':'dark') : r.value;
   }));
 
-  // purge gate
+  // ── purge gate ──
   const EXPECTED = '5841673728';
   const gateInput = document.getElementById('gateInput'), gateBtn = document.getElementById('gateBtn');
   gateInput.addEventListener('input', ()=>{
     const ok = gateInput.value.trim() === EXPECTED;
     gateBtn.disabled = !ok;
-    gateInput.classList.toggle('match', gateInput.value.length>0 && !ok);
   });
   function closeGate(){ document.getElementById('gateOverlay').classList.remove('show'); }
-  // open gate from ledger purge row
-  document.querySelectorAll('.kind-purge').forEach(k=>{
-    k.closest('.ledger-row').style.cursor='pointer';
-    k.closest('.ledger-row').addEventListener('click', ()=>{ document.getElementById('gateOverlay').classList.add('show'); gateInput.value=''; gateBtn.disabled=true; gateInput.classList.remove('match'); });
-  });
+  function openGate(){ document.getElementById('gateOverlay').classList.add('show'); gateInput.value=''; gateBtn.disabled=true; }
 
-  // candidates
-  // Review — exception-centered
-  function toggleSafeDrawer(){
-    const d = document.getElementById('safeDrawer'), c = document.getElementById('safeChev');
-    d.style.display = d.style.display==='none' ? 'block' : 'none';
-    c.classList.toggle('open');
+  // ── review ──
+  function toggleSafe(){
+    document.getElementById('safeDrawer').classList.toggle('open');
+    document.getElementById('safeChev').classList.toggle('open');
   }
   function toggleJudge(row){
     row.classList.toggle('open');
@@ -744,33 +753,27 @@
       det.classList.toggle('open');
       det.style.display = det.classList.contains('open') ? 'block' : 'none';
     }
-    row.querySelector('.jr-toggle .chev').classList.toggle('open');
   }
   let optIns = 0;
   function optIn(btn){
     btn.classList.toggle('included');
+    if (btn.classList.contains('included')) { btn.textContent = I18N[document.documentElement.lang].include === 'Include' ? '✓' : '✓'; btn.style.background='var(--accent)'; btn.style.color='#06120f'; }
+    else { btn.textContent = I18N[document.documentElement.lang].include; btn.style.background=''; btn.style.color=''; }
     optIns = btn.classList.contains('included') ? optIns+1 : optIns-1;
-    document.getElementById('reviewSelCount').textContent = `210 + ${optIns}`;
+    document.getElementById('revSel').textContent = `210 + ${optIns}`;
   }
-  // Degraded-state demo toggles (keyboard: T=tcc, B=budget, U=unreachable, E=empty review)
   function hideTcc(){ document.getElementById('tccBanner').style.display = 'none'; }
   function showTcc(){ document.getElementById('tccBanner').style.display = 'flex'; }
   window.addEventListener('keydown', e=>{
     if (e.target.tagName === 'INPUT') return;
-    if (e.key === 't' || e.key === 'T') showTcc();
-    if (e.key === 'b' || e.key === 'B') {
-      document.getElementById('dock').classList.remove('hidden');
-      document.getElementById('budgetBanner').style.display = 'block';
-    }
-    if (e.key === 'u' || e.key === 'U') {
-      document.getElementById('dock').classList.remove('hidden');
-      document.getElementById('offlineNote').style.display = 'block';
-    }
-    if (e.key === 'e' || e.key === 'E') {
+    if (e.key==='t'||e.key==='T') showTcc();
+    if (e.key==='b'||e.key==='B'){ document.getElementById('dock').classList.remove('hidden'); document.getElementById('budgetBanner').style.display='block'; }
+    if (e.key==='u'||e.key==='U'){ document.getElementById('dock').classList.remove('hidden'); document.getElementById('offlineNote').style.display='block'; }
+    if (e.key==='e'||e.key==='E'){
       document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));
       document.getElementById('screen-review').classList.add('active');
-      document.querySelectorAll('.judge-list, .review-hero, .already-safe, .judgment-head, .table-foot').forEach(el=>{ if(el) el.style.display='none'; });
-      document.getElementById('emptyReview').style.display = 'block';
+      document.querySelectorAll('.rev-hero,.safe-line,.safe-drawer,.judge-head,#judgeList,.rev-foot').forEach(el=>el.style.display='none');
+      document.getElementById('emptyReview').style.display='block';
     }
   });
 </script>

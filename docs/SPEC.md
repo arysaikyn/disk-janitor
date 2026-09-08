@@ -285,7 +285,13 @@ research); EN brand frozen as **Giveback** (D-23); provisional tuning defaults l
 **real deliverable deadlines** (选题评论 · 公开展示帖 · 试用反馈), 9.10 is the 课堂展示
 (5'+2'), 9.13 23:59 is the final submission; R1–R6 verified verbatim; the earlier
 "phantom deadlines" correction (09-08, 5046475) was itself wrong — it read only the
-教学日历, which lists class sessions, not the assignment spec.
+教学日历, which lists class sessions, not the assignment spec. Evening 09-08: owner
+design critique ("not clean, bilingual mashed, bland") drove a **design-language v2**
+rework of the mockup: single-language mode (中/EN switcher, amends ADR-13 rendering),
+type-driven hierarchy (numbers not sentences), color reserved for grade data (dot +
+word, no badge chips), hairline chrome over card boxes, microcopy moved to hover
+hints. All interactions re-verified in-browser; SPEC Part C §3 conventions + §3.1
+amended in the same pass.
 
 ## Where we are (2026-09-08)
 
@@ -1281,28 +1287,32 @@ Conventions for every wireframe below:
 - Chrome is shared: transparent titlebar with real traffic lights, vibrancy backdrop,
   4-item sidebar, collapsible right agent dock (⌘J) [12] (§2.1–2.2). The sidebar is
   drawn in full once (§3.2) and abbreviated `(sidebar)` elsewhere.
-- **Bilingual label contract (D-02, D-12, ADR-13):** every control renders 中文 primary +
-  English secondary — 「开始扫描 Start scan」. Dense rows may drop the EN tail when
-  width-bound; a screen never mixes CN-only and EN-only full labels. i18n keys carry
-  both strings; composition is the component's job (§6, ADR-13).
+- **Single-language mode (owner decision 09-08, amends D-02/D-12/ADR-13 rendering):**
+  the UI renders ONE language at a time — 中文 primary by default, EN via a titlebar
+  switcher that swaps the whole UI (i18n key → string table per §6). No inline
+  「中文 English」 duplication on controls; the course's CN-primary requirement is met
+  by the default, EN is a full translation. Dense rows and hover hints carry the
+  microcopy that old dual labels forced onto the surface (v2 design language,
+  `docs/mockups/README.md`).
 - Wireframes pin content, hierarchy, and states — not pixels. Component mapping: §6.
 
 ### 3.1 Grade color language
 
 Risk-tier color on every candidate row, plan entry, and ledger record is table stakes
 [13 §I] (DevCleaner's SAFE/WARNING/DANGER chips [13 §A]); ours maps the five rebuild-cost
-grades [ADR-8][SPEC Part B §6]. Every color pairs with a glyph + word (colorblind-safe,
-theme-following per §5.5):
+grades [ADR-8][SPEC Part B §6]. **v2 rendering (09-08):** a quiet 8 px color dot +
+short single-language grade word — the dot is the grade's color, the word is its name,
+the row stays neutral. Color appears ONLY on graded rows, never as UI decoration:
 
-| Grade | Badge (bilingual) | Color | Plan policy |
+| Grade | Dot + word (zh / en) | Color | Plan policy |
 |---|---|---|---|
-| PureCache | ● 纯缓存 Pure cache | green | default allow |
-| RebuildableFromSource | ● 可重建 Rebuildable | teal | default allow; regen cost shown |
-| Redownloadable | ● 可重下载 Redownloadable | blue | default allow; network cost stated |
-| Expensive | ⚠ 代价高 Expensive | amber | per-entry opt-in only [SPEC Part B §5.3] |
-| HandsOff | 🔒 请勿动手 Hands off | red | never auto-plan; size shown, nothing more |
+| PureCache | ● 纯缓存 / Pure | green | default allow |
+| RebuildableFromSource | ● 可重建 / Rebuildable | teal | default allow; regen cost shown |
+| Redownloadable | ● 可重下载 / Redownloadable | blue | default allow; network cost stated |
+| Expensive | ● 代价高 / Expensive | amber | per-entry opt-in only [SPEC Part B §5.3] |
+| HandsOff | ● 请勿动手 / Hands off | red | never auto-plan; size shown, nothing more |
 
-Refusals reuse the glyphs: ⚠/🔒 + refusal reason + evidence — never a bare strikethrough
+Refusals reuse the dot: red dot + refusal reason + evidence — never a bare strikethrough
 [13 §I]. Color means exactly one thing on a row — "how wrong could this go" — bytes and
 paths stay neutral.
 
