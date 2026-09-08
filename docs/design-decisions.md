@@ -20,7 +20,7 @@
 - ADR-10 Grace window & purge confirmation: typed allocated byte count, 72 h restore
 - ADR-11 Platform strategy — native on macOS, Windows, Linux (`platform/` abstraction, macOS-first order, honest per-OS guarantee table)
 - ADR-12 Windows durability & restore semantics — WAL journal as restore authority, FlushFileBuffers at state transitions
-- ADR-13 Bilingual UI — CN primary + EN secondary (svelte-i18n central catalog; CN for persuasion, EN for identifiers/terms)
+- ADR-13 Bilingual UI — CN primary + EN secondary catalog (svelte-i18n central catalog; CN for persuasion, EN for identifiers/terms) — **rendering amended 09-08 per D-31: single-language mode with a 中/EN switcher, no simultaneous dual labels**
 - ADR-14 CLI surface contract — thin subset (scan --json, plan, restore, interactive purge) for CI/tests/agents; purge never gains a --yes bypass (P4)
 - (ADR-15 number reserved — unused; ADR-16..18 continue the 2026-08-31 session series)
 - ADR-16 Uninstall contract — restore-or-explicit-confirm every surviving quarantine across volumes before state removal; orphaned-quarantine warning at startup
@@ -663,7 +663,9 @@ either: Recycle Bin restore is shell-mediated and our WAL already owns the
 
 ## ADR-13: Bilingual UI — CN primary + EN secondary
 
-**Status:** accepted 2026-08-31 (owner-confirmed).
+**Status:** accepted 2026-08-31 (owner-confirmed); **amended 2026-09-08 (D-31)** —
+rendering changed from simultaneous dual labels to single-language mode with a 中/EN
+switcher; the catalog and CN/EN completeness requirements below stand unchanged.
 
 **Context.** The owner chose bilingual labels with **Chinese primary, English secondary**
  (D-02, D-12). Chinese carries the persuasion — the trust-building copy, the refusal voice
@@ -692,6 +694,15 @@ either: Recycle Bin restore is shell-mediated and our WAL already owns the
   (keys only) is already enforced.
 - Ledger/WAL records stay locale-neutral: stored copy is identifiers + data, UI-localized
   at render (consistent with ADR-4's replay-first design).
+
+**Amended 2026-09-08 (D-31).** After the interactive mockup exposed the cost of
+simultaneous dual labels — 「中文 English」 pairs doubled the text on every control and
+read as clutter ("text soup") against the clean reference (DaisyDisk) — the owner revised
+the rendering rule: one locale renders at a time, 中文 by default, EN via a titlebar
+switcher that swaps the whole UI. What survives unchanged: the central `svelte-i18n`
+catalog, CN/EN completeness from day one (missing key = build failure), and CN for
+persuasion / EN for identifiers. Simultaneous bilingual display was the wrong rendering
+of a right requirement.
 
 ## ADR-14: CLI surface contract — thin subset beside a GUI-primary product
 
@@ -827,7 +838,7 @@ research notes [02]–[11]; iterate alongside `docs/SPEC.md` (course rule).*
 
 ---
 *Verdicts recorded 2026-08-30 in a single review session: 9 upheld, 3 amended (ADR-1, ADR-2, ADR-8), 0 rejected, 0 contested. Amendments propagate into DESIGN §3.10, SPEC §7–8, crate-map §1f/§3 (landed same day).*
----
+> Decision register D-01…D-31 (22 from the 08-31 grill; D-23…D-30 added by wave 2, 09-01; D-31 added 09-08 after the design-language v2 rework);
 *2026-08-31 session: GUI pivot (Tauri + Svelte per notes [12]/[13]) — ADR-5 amended, ADR-11
 amended, new ADR-13/14/16/17/18 from 22 owner decisions (decision register, 3 grill rounds).
 Statuses read "accepted (owner-confirmed)" pending the owner's line-by-line stamp pass over
@@ -845,7 +856,7 @@ Format: ID | decision | owner answer (verbatim or paraphrased) | docs to amend
 
 ## Round 1 (safety, identity, UX direction)
 D-01 agent_authority | Agent is PROPOSE-ONLY: returns plan ID, human confirms in UI; LLM never executes quarantine moves | DESIGN §3.7 tools table + ADR-7 + new principle P2
-D-02 ui_language | BILINGUAL labels, Chinese primary + English secondary | DESIGN §3.8-replacement (GUI spec) + new ADR-13 (i18n)
+D-02 ui_language | BILINGUAL support, Chinese primary + English secondary — **rendering revised 09-08 (D-31): one locale at a time via 中/EN switcher** | ADR-13 (as amended) + §3 conventions
 D-03 error_voice | 拒绝+证据+替代: every refusal = verdict + evidence + safe alternative | new principle P1 + DESIGN §5 error catalog note
 D-04 ui_paradigm | (see D-13) | —
 D-05 first_run | Dashboard + hint line (no wizard state machine) | GUI spec §first-run
@@ -857,7 +868,7 @@ D-08 cli_scripting | GUI-primary; thin CLI subset kept (scan --json / plan / res
 D-09 r2_correction | COURSE R2 ACTUALLY ALLOWS: Web / CLI 交互式终端 / 桌面 App / 手机 App (any one). Previous "ratatui required" was a repo-doc choice, NOT course mandate. Agent's earlier "R2 conflict" claim was wrong and retracted. | SPEC §5 R2 row rewrite
 D-10 paradigm | GUI-FIRST desktop App (owner explicit: "Apple native feel, frictionless, usable by people who barely know what it is", "not going to be a CLI", "not just for a class — want a real product") | SPEC §1/§4/§5 + DESIGN §3.8 rewrite + ADR-5 amendment
 D-11 gui_stack | Tauri + Web UI (owner confirmed recommendation). Rust core unchanged (R1). Research: docs/research/12-tauri-gui-stack.md — Tauri 2.11.5, Svelte 5.57, svelte-i18n, window-vibrancy 0.8.0, ipc::Channel for progress; packaging per OS in note 12 | ADR-5 amendment → "GUI stack: Tauri 2.11.5 + Svelte 5.57" + crate-map §1g
-D-12 ui_language_detail | Bilingual = CN primary, EN secondary (owner picked option "Bilingual labels", round-2 confirmation question defaulted to CN-primary when picker cancelled) | ADR-13
+D-12 ui_language_detail | Bilingual = CN primary, EN secondary (owner picked option "Bilingual labels", round-2 confirmation question defaulted to CN-primary when picker cancelled) — **rendering revised 09-08 (D-31): switcher replaces inline dual labels** | ADR-13 (as amended)
 
 ## Round 3 (NFRs, operations, course artifacts)
 D-13 perf_budget | Scan ≥1 GiB/s metadata-only on M1 Pro demo Mac; scan home dir <2 min; bench test in CI | DESIGN §7 + NFR table in DESIGN §1
@@ -869,6 +880,7 @@ D-18 format_versioning | Owner: "not just for a class — real product." Decisio
 D-19 ai_log_workflow | Per-milestone export to docs/ai-logs/M<N>-<date>.md (excerpts + timestamps, API keys/privacy redacted) | new docs/ai-logs/ convention + README note
 D-20 expense_sheet | Standard columns: date / model / calls / prompt+completion tokens / cost USD + CNY; ledger budget rec gains model field; janitor expense-report subcommand; scope = LLM API spend | DESIGN §3.5 ledger rec payload + ADR-9 note
 D-21 demo_dataset | (pending owner after competitor-presentation research — note 13) demo will be PRODUCT VIDEO (Screen Studio/Hyperframes) + live preview; dataset decision deferred to video-script step | DESIGN §8 M5 note
+D-31 ui_language_rendering | Owner design critique 09-08 ("text soup"): single-language mode — one locale rendered at a time, 中文 default, 中/EN titlebar switcher swaps the whole UI; catalog + CN/EN completeness unchanged from ADR-13 | ADR-13 amendment + SPEC Part C §3 conventions + §6 component inventory + mockup v2
 D-22 demo_llm | Product video + live preview after (owner explicit). Fallback chain: live DeepSeek → pre-recorded trajectory replay | DESIGN §8 M5 note
 
 ## Round 4 (research wave 09-01, owner-confirmed via decision sheet)

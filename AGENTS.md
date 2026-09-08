@@ -52,8 +52,9 @@ A fresh session trusts the front door; a stale one propagates. Before ANY work:
   `agent/` (LLM loop), `platform/` (per-OS traits), `ui/` (Tauri+Svelte app in
   `app/`, thin CLI plumbing in the core bin). One concept per file.
 - UI is a Tauri + Svelte desktop App (ADR-5/18; **SPEC.md Part C** governs) —
-  NOT a TUI; the TUI stack is shelved. Chinese-primary + English-secondary
-  bilingual labels (ADR-13); identifiers/comments in English.
+  NOT a TUI; the TUI stack is shelved. Single-language UI (中文 default) with a 中/EN
+  switcher — one language at a time (owner decision D-31, 09-08, amends ADR-13
+  rendering); identifiers/comments in English.
 
 ## Course deliverables to keep green
 - Read `docs/SPEC.md` Part A first for the current vision/architecture/status;

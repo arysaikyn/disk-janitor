@@ -1086,7 +1086,7 @@ Invariants worth testing:
 | Platform matrix | CI matrix `macos-latest` / `windows-latest` / `ubuntu-latest` on every push: macOS runs the macOS `Syscall-level` suite above on APFS; Linux runs `renameat2(RENAME_NOREPLACE)`→`EEXIST` on ext4/tmpfs, `EXDEV` across mounts, fsync(file)+fsync(dirfd) WAL ordering, `/proc/self/mountinfo` fstype resolution, NFS/skip gating; Windows runs `FileRenameInfoEx(Flags=0)`→target-exists error, `MoveFileExW` fallback path, `dwVolumeSerialNumber` same-volume check, junction non-descent, `\\?\` long-path manifest round-trip, OneDrive `RECALL_ON_DATA_ACCESS` detection (skip if OneDrive absent) [09 §0/§delta][10 §0][11 §1/§4]. Syscall tests are `#[cfg]`-gated per OS (`#[cfg(target_os = "macos")]`, `#[cfg(target_os = "linux")]`, `#[cfg(windows)]`); portable layers (ledger/WAL, plan, classify fixtures, TUI snapshots, agent loop) run on all three runners. |
 | Crash injection (WAL) | spawn a child `janitor` applying a plan with `KILL_AT ∈ {before_wal_sync, after_wal_sync_before_rename, after_rename_before_result, mid_batch}`; `kill -9`; parent runs `recover()` and asserts: committed ops present exactly once, no phantom ops, torn tail truncated + parked to `*.torn`, `seq` gaps reported. Optional deep probe via `dtrace`/`FSInOut` for cross-file ordering [08 risks #2]. |
 | Ledger property tests | random op sequences + random truncation points → replay invariants hold (skip-and-continue, monotonic `seq` after gaps, no CRC false positives) [08 §5]. |
-| GUI (purge modal + flows) | Svelte component tests + Tauri `ipc::Channel` mock: the typed byte-count modal rejects a mismatched byte string; interrupt semantics per §5 (apply auto-resume, purge runs to completion); evidence panel renders a full `Evidence` chain; bilingual labels CN/EN per ADR-13. Wireframe conformance per SPEC Part C §3. |
+| GUI (purge modal + flows) | Svelte component tests + Tauri `ipc::Channel` mock: the typed byte-count modal rejects a mismatched byte string; interrupt semantics per §5 (apply auto-resume, purge runs to completion); evidence panel renders a full `Evidence` chain; single-language rendering with a 中/EN switcher per D-31 (ADR-13 as amended 09-08) — string-table completeness test fails the build if a key is missing from either locale. Wireframe conformance per SPEC Part C §3. |
 | (shelved TUI row kept for traceability) | ratatui `TestBackend` snapshot tests per screen [06 §rec] — superseded by the GUI row above (ADR-5/18). |
 | Scanner edge cases | firmlink walk of `/` (no double-walk of the Data side) [04 §4]; an iCloud-shaped tree scanned with materialization OFF (no downloads — assert no content reads via unchanged mtime/size); a mounted volume appearing mid-tree (`st_dev` reject in `descend`). |
 | Agent | sans-IO `RunState` serde round-trip + resume; a stub OpenAI-compatible HTTP server (e.g. wiremock) covering: malformed `arguments` JSON (repair path), DeepSeek `reasoning_content` echo shape, OpenRouter final usage-chunk deviation, Ollama id-less tool calls, missing final usage chunk (estimate marked unverified, not billed) [07 §providers, risks]; leak-test regexes on every outbound message [07 §privacy 5]. |
@@ -1180,8 +1180,9 @@ baseline preserved, Linux/Windows deltas documented in §3.10 and §5.5.*
 
 ## 1. Product identity
 
-**Name.** 「还我磁盘」 — Chinese primary, English secondary everywhere in the UI (D-02,
-D-12). The name is the promise: 还我 = "give it back" — 删除是操作，恢复是权利
+**Name.** 「还我磁盘」 — the brand; the UI renders one language at a time (中文 default,
+中/EN switcher, D-31 amending ADR-13's dual-label rendering, 09-08). The name is the
+promise: 还我 = "give it back" — 删除是操作，恢复是权利
 (deletion is an operation, restoration is a right) [SPEC Part B §1].
 **Brand (D-23, owner 2026-09-01; EN coinage finalized 2026-09-08).** "Disk Janitor" is
 retained as the internal/working title only — a live name-collision audit found 4+
@@ -1803,15 +1804,16 @@ operation is resumable because the WAL already owns its state [SPEC Part B §5.2
 ## 6. Component inventory
 
 Svelte 5 (runes) components; stores are `$state` class instances fed only by Channel
-`onmessage` handlers [12]. Every text-bearing component takes bilingual label pairs
-(`{zh, en}`), composition per §3 conventions (D-02, D-12; ADR-13).
+`onmessage` handlers [12]. Text comes from the i18n string tables via the 中/EN
+switcher — one locale rendered at a time (D-31, amending ADR-13 rendering; §3
+conventions).
 
 | Component | Purpose | Notes |
 |---|---|---|
 | `AppShell.svelte` | sidebar + content + agent dock host | window chrome, keyboard map (§2.1–2.2) |
-| `Sidebar.svelte` | 4 persistent nav items + agent toggle | bilingually labeled, active state |
-| `GradeBadge.svelte` | ●/⚠/🔒 grade chip (§3.1) | CSS-variable colors, glyph+word always |
-| `BilingualLabel.svelte` | 「中文 English」 pair | dense mode drops EN tail (§3 conventions) |
+| `Sidebar.svelte` | 4 persistent nav items + agent toggle | i18n-labeled, active state |
+| `GradeDot.svelte` | grade dot + single-language word (§3.1) | CSS-variable colors per theme |
+| `I18n.svelte` / `t()` helper | string-table lookup for the active locale | missing key in either locale fails the build (§7) |
 | `VolumeCard.svelte` | used/free/snapshot-held bars (§3.2) | two labeled free numbers [SPEC Part B §3.1] |
 | `ScanProgressRing.svelte` | ring + rate + current root (§3.3) | Channel-fed; no polling |
 | `CandidateTable.svelte` | virtualized rows w/ checkboxes (§3.4) | O(visible); path-key selection restore [SPEC Part B §3.8] |
@@ -1846,10 +1848,9 @@ What the product takes from [13]'s survey — and what it deliberately refuses:
 | Stats [13 §D] | telemetry disclosure builds trust | zero-telemetry stated on screen (§3.8) [D-06] |
 | Drezze [13 §E] | "moves to Trash so it's recoverable" as trust metaphor | superseded: quarantine + WAL restore, stronger than Trash (§4.4) |
 | CleanMyMac [13 §B] | **rejected:** threat counters, fear framing, "Notarized by Apple" endorsement shorthand | anti-fear voice table (§1); "Developer ID 签名并公证" wording only [D-16] |
-| — [13 §F] | Screen Studio-style demo conventions | 90 s structure with restore as climax (§4.4); demo planning deferred (X-02, D-21) |
+CN-primary UI with full EN switcher (D-31) keeps the localization differentiator of
+[13 §delta] — full Simplified-Chinese product copy — without the dual-label clutter.
 
-Open lane noted by [13]: no major competitor ships real Simplified-Chinese product copy —
-CN-primary bilingual UI (ADR-13) is a differentiator, not just accessibility [13 §delta].
 
 
 # Part D — Dependencies (crate plan)
