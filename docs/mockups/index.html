@@ -250,6 +250,21 @@
   .jr-detail .ev-row { border-bottom: 1px solid var(--border-soft); }
   .jr-detail.open { display: block; }
 
+  /* Degraded states */
+  .tcc-banner { display: flex; gap: 14px; align-items: flex-start; background: rgba(255,179,64,.08); border: 1px solid rgba(255,179,64,.4); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
+  .tcc-banner .tb-icon { font-size: 18px; }
+  .tcc-banner .tb-title { font-weight: 650; font-size: 13px; margin-bottom: 3px; }
+  .tcc-banner .tb-body { font-size: 12px; color: var(--fg-dim); margin-bottom: 10px; }
+  .tcc-banner .tb-body .mono { color: var(--fg); }
+  .tcc-banner .tb-actions { display: flex; gap: 8px; }
+  .unreadable-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); font-size: 13px; background: rgba(255,107,107,.05); }
+  .unreadable-row .ur-path { flex: 1; font-family: var(--mono); font-size: 12px; color: var(--fg-dim); }
+  .unreadable-row .ur-err { font-size: 11px; color: var(--fg-faint); flex-shrink: 0; }
+  .empty-review { text-align: center; padding: 60px 20px; color: var(--fg-dim); }
+  .empty-review .big { font-size: 16px; color: var(--fg); margin-bottom: 6px; }
+  .budget-banner { background: rgba(255,179,64,.12); border: 1px solid rgba(255,179,64,.4); color: var(--amber); border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+  .offline-note { background: var(--surface-2); border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--fg-dim); }
+
   /* Plan */
   .plan-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px; }
   .plan-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
@@ -391,6 +406,20 @@
         </div>
         <div class="footnote">¹ Time Machine 本地快照锁定的空间，过期后释放 freed after snapshot expiry</div>
 
+        <div class="tcc-banner" id="tccBanner" style="display:none">
+          <div class="tb-icon">⚠</div>
+          <div>
+            <div class="tb-title">macOS 需要授权 macOS needs permission for ~/Library</div>
+            <div class="tb-body">证据 evidence: probe returned <span class="mono">EPERM</span>（系统设置 ▸ 隐私与安全性 ▸ 文件与文件夹
+              <span class="en">System Settings ▸ Privacy &amp; Security ▸ Files</span>）</div>
+            <div class="tb-actions">
+              <button class="btn small" style="background:var(--accent);color:#fff">打开系统设置 Open Settings</button>
+              <button class="btn ghost small" onclick="hideTcc()">排除并继续 Exclude &amp; continue</button>
+              <button class="btn ghost small">重试 Retry</button>
+            </div>
+          </div>
+        </div>
+
         <div id="emptyState" class="empty-state" style="display:none">
           <div class="big">还没有扫描记录 No scans yet.</div>
           <p>扫描只读元数据，文件不会离开你的 Mac。<br>Scans read metadata only — nothing leaves this Mac.</p>
@@ -506,6 +535,22 @@
             <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">可重建 Rebuildable:</span> <span class="detail">镜像 layer 缓存 layer cache</span></span><span class="strength">中 mid</span></div>
             <div class="regen-line">重建 Rebuild: <span class="cmd">docker pull ≈ 4 min</span> · 网络 network: 需要 yes · 手动纳入 per-entry opt-in</div>
           </div>
+          <div class="judge-row" onclick="toggleJudge(this)">
+            <div class="jr-toggle"><span class="chev">▸</span></div>
+            <span class="badge b-red">🔒 请勿动手 Hands off</span>
+            <span class="jr-path">~/Docker/containers/…</span>
+            <span class="jr-bytes">—</span>
+            <span class="jr-refuse">正在写入 actively written</span>
+          </div>
+          <div class="jr-detail" style="display:none">
+            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">证据不可读 evidence unreadable:</span> <span class="detail">probe EPERM on ancestor</span></span><span class="strength">—</span></div>
+            <div class="regen-line">判定 REFUSED 拒绝 · 替代 alternative: 排除该根 exclude root — never auto-included</div>
+          </div>
+        </div>
+
+        <div class="empty-review" id="emptyReview" style="display:none">
+          <div class="big">扫描完成 — 没有值得回收的东西。Scan complete — nothing worth reclaiming.</div>
+          <p>这本身就是好消息。That is good news.</p>
         </div>
 
         <div class="table-foot"><span>已选 selected: <b id="reviewSelCount">210 + 0</b> 项 · 19.3 GB · 0 已销毁</span><span class="spacer" style="flex:1"></span>
@@ -582,6 +627,8 @@
           <button class="btn small" style="width:100%" onclick="toggleDock();goto('plan')">在计划中打开 Open in Plan</button>
         </div>
         <div class="msg agent">⚠ 拒绝 refused: 2 项 mtime 热 · 证据 evidence: 正在写入 actively written · 替代 alternative: 稍后重扫 rescan later</div>
+        <div class="budget-banner" id="budgetBanner" style="display:none">已到预算上限 budget reached · 证据 evidence: $2.00 / 200k tok / 40 turns 中已触发 · 替代 alternative: 提高上限或继续本地流程 raise cap or continue locally</div>
+        <div class="offline-note" id="offlineNote" style="display:none">助手不可用 agent unreachable — 本地流程不受影响 local flow unaffected</div>
       </div>
       <div class="dock-foot"><span>本轮 turn: 3 · tokens 4,102</span><span class="cost">成本 cost $0.0009</span></div>
     </aside>
@@ -705,6 +752,27 @@
     optIns = btn.classList.contains('included') ? optIns+1 : optIns-1;
     document.getElementById('reviewSelCount').textContent = `210 + ${optIns}`;
   }
+  // Degraded-state demo toggles (keyboard: T=tcc, B=budget, U=unreachable, E=empty review)
+  function hideTcc(){ document.getElementById('tccBanner').style.display = 'none'; }
+  function showTcc(){ document.getElementById('tccBanner').style.display = 'flex'; }
+  window.addEventListener('keydown', e=>{
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 't' || e.key === 'T') showTcc();
+    if (e.key === 'b' || e.key === 'B') {
+      document.getElementById('dock').classList.remove('hidden');
+      document.getElementById('budgetBanner').style.display = 'block';
+    }
+    if (e.key === 'u' || e.key === 'U') {
+      document.getElementById('dock').classList.remove('hidden');
+      document.getElementById('offlineNote').style.display = 'block';
+    }
+    if (e.key === 'e' || e.key === 'E') {
+      document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));
+      document.getElementById('screen-review').classList.add('active');
+      document.querySelectorAll('.judge-list, .review-hero, .already-safe, .judgment-head, .table-foot').forEach(el=>{ if(el) el.style.display='none'; });
+      document.getElementById('emptyReview').style.display = 'block';
+    }
+  });
 </script>
 </body>
 </html>

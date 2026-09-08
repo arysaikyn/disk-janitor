@@ -42,6 +42,30 @@ xdg-open docs/mockups/index.html    # Linux
 - **Restore is the brand**: 恢复是权利 in sidebar foot; undo moment is the only
   primary CTA shape.
 
+## Degraded states (verified 09-08)
+
+All five spec'd degraded states are rendered (keyboard demo: `T` TCC banner,
+`B` budget-reached, `U` agent-unreachable, `E` empty Review; evidence-unreadable row
+lives inside Review's judgment list):
+
+- TCC pre-flight banner (§4.1) — 判定 EPERM + evidence + [打开系统设置] / 排除并继续
+- Evidence-unreadable row — ⚠ probe EPERM, refused-not-hidden
+- Budget-reached banner (ADR-9) — stop reason + un-run turn count
+- Agent-unreachable (P3) — 「助手不可用, 本地流程不受影响」
+- Empty Review — 「扫描完成 — 没有值得回收的东西」 (good news, not failure)
+
+## App icon
+
+`docs/mockups/icon.svg` — the undo moment is the logo (note 20 direction B, D-23):
+restore arc (↩) returning a byte-counter stack, calm dark navy tile. No broom, no
+dust — restore, not scrub. Seed for `src-tauri/icons/` at M3.
+
+## Scan-result persistence
+
+Owner decision 09-08 (SPEC Part C §2.3): the last scan result is persisted and
+re-openable (`get_last_scan` seeds Review/Plan without rescanning; a new scan replaces
+it). Borrowed from the Mole/grandperspectiv pattern [03 §rec].
+
 ## Review-screen redesign (2026-09-08)
 
 The heart screen was reworked from a candidate table to **exception-centered review**.

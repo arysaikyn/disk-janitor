@@ -1265,6 +1265,15 @@ deltas — never polling [12]. All scan/classify/plan/apply/purge I/O goes throu
 named Rust commands; the webview never receives raw fs verbs, and the Tauri capability
 file stays deny-by-default [12].
 
+**Scan-result persistence (owner decision 09-08, from [03 §rec] Mole/grandperspectiv
+pattern).** The last scan result is persisted and re-openable: `get_last_scan` seeds
+Review/Plan from the stored manifest without a rescan; a fresh scan replaces it. The
+Dashboard 「上次扫描 Last scan」 row is therefore always actionable (reopen Review from
+it). Persistence is the classified manifest (`plan/` format, SPEC Part B §3.3), not raw
+walk bytes; the 72 h grace and WAL are unaffected. This makes the "open last result"
+flow — the pattern WizTree/baobab users expect — first-class without a scan cache
+[03 §rec].
+
 ## 3. Screen-by-screen wireframes
 
 Conventions for every wireframe below:
