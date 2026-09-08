@@ -38,10 +38,10 @@ differentiator we *need* on camera — undo/evidence — which no competitor's n
 | B. Coinage on undo promise | 还我磁盘 (keep CN!) + EN coinage e.g. **Giveback / Reclaim / 归还** — "还我" is the brand, EN is a descriptor | hero motif = restore arrow (↩) + byte counter; the undo moment is the logo | CN name stays the promise; EN loses search equity |
 | C. Evidence-led | EN: **Receipt / Proofread / Ledger-adjacent**; CN stays 还我磁盘 | motif = checkmark-in-ledger / evidence chips as brand element | functional, memorable, but strays from "cleaner" category cues |
 
-Recommendation: **B** — the existing CN name already *is* the undo promise (还我 = "give it
-back"), and the product's own differentiator (note 13 §G1: undo moment on camera) needs a
+Recommendation: **B** — the existing CN name already *is* the undo promise (还我 = "give
+it back"), and the product's own differentiator (note 13 §G1: undo moment on camera) needs a
 visual identity that says restore, not scrub. Keep 还我磁盘 primary (D-02), pick an EN
-descriptor that carries the promise.
+descriptor that carries the promise. **Owner decision 09-08: EN coinage = Giveback.**
 
 ### 4. Light availability check (2026-09-01, live fetches)
 

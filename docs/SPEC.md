@@ -227,8 +227,13 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 
 ## 7. Open questions / risks (owner flagged these as gut-feel)
 
-- Classification thresholds (e.g. "mtime < 10 min ⇒ actively written") — need tuning.
-- Grace period: is 72 h right?
+> **Provisional defaults locked 2026-09-08 (owner call):** mtime 热区 10 min · grace
+> 72 h · minimum candidate 50 MB are the v1 defaults, documented here as **provisional
+> and re-tuned after M1 real-scan data**. They are choices, not verified truths.
+
+- Classification thresholds (e.g. "mtime < 10 min ⇒ actively written") — **provisional
+  default 10 min; re-tune after M1**.
+- Grace period — **provisional default 72 h; re-tune after M2 usage**.
 - APFS snapshot interactions; iCloud placeholder files (dataless) — scan must not
   trigger evict/download; classify must mark them appropriately. Per-platform analogs:
   OneDrive `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` placeholders on Windows; none on Linux
@@ -1164,11 +1169,12 @@ baseline preserved, Linux/Windows deltas documented in §3.10 and §5.5.*
 **Name.** 「还我磁盘」 — Chinese primary, English secondary everywhere in the UI (D-02,
 D-12). The name is the promise: 还我 = "give it back" — 删除是操作，恢复是权利
 (deletion is an operation, restoration is a right) [SPEC Part B §1].
-**Brand (D-23, owner 2026-09-01).** "Disk Janitor" is retained as the internal/working title
-only — a live name-collision audit found 4+ shipping products using it (note 20 §1). The
-product brand is **还我磁盘** (CN, primary); the EN identity is a **coinage on the undo
-promise** — the 归还/restore gesture, not a generic "cleaner" noun — pending a final
-candidate pick (note 20 §3, direction B).
+**Brand (D-23, owner 2026-09-01; EN coinage finalized 2026-09-08).** "Disk Janitor" is
+retained as the internal/working title only — a live name-collision audit found 4+
+shipping products using it (note 20 §1). The product brand is **还我磁盘** (CN,
+primary); the EN identity is **Giveback** — the 归还/restore gesture, not a generic
+"cleaner" noun (note 20 §3, direction B; owner picked Giveback 09-08). Hero motif =
+restore arrow (↩) + byte counter; the undo moment is the logo.
 
 **Positioning.** An evidence-driven, reversibility-first disk cleaner with an Apple-native
 feel, usable by people who barely know what it is (D-10). It answers the question `du`

@@ -2,6 +2,7 @@
 
 Single-file interactive visual mockup of the full product, implementing SPEC Part C
 (UX design). Source of the visual language for the Svelte implementation (M3).
+**Brand: 还我磁盘 / Giveback (EN coinage, owner pick 09-08).**
 
 ## Open it
 
