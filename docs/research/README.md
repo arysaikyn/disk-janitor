@@ -53,7 +53,7 @@ recommendations were landed as defaults (D-26…D-30) and remain owner-vetoable.
 
 | # | Question | Options | Evidence | Recommended | Outcome |
 |---|---|---|---|---|
-| Q1 | Brand direction (EN name/identity) | A keep "Disk Janitor" · B coinage on undo promise (还我磁盘 stays CN; EN descriptor) · C evidence-led name | note 20 §1–3: name taken by 4 live products; CN name already is the promise | B | **B approved → D-23** (EN candidate pick still open) |
+| Q1 | Brand direction (EN name/identity) | A keep "Disk Janitor" · B coinage on undo promise (还我磁盘 stays CN; EN descriptor) · C evidence-led name | note 20 §1–3: name taken by 4 live products; CN name already is the promise | B | **B approved → D-23** (EN candidate picked 09-08: Giveback) |
 | Q2 | One-tap clean auto-mark set | A PureCache only · B PureCache + Rebuildable (with confirm list) | note 15 §4–6: no competitor gates by grade; evidence-graded auto-actions must stay minimal | A (with awaiting-confirm count surfaced) | **B approved (overrides recommendation) → D-24** |
 | Q3 | Vault placement | A tab inside Ledger (台账\|恢复站) · B separate screen | note 17 §6: vault = actionable subset of ledger | A | **A approved → D-25** |
 | Q4 | Restore collision default | A rename (Keep Both) · B ask always | note 17 §5: Time Machine defaults to Keep Both; reverse-rename maps for free | A | default landed → D-26 (vetoable) |

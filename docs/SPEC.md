@@ -8,7 +8,7 @@
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
 **Status snapshot (2026-09-08):** design 100% · implementation 0% (M1 awaits owner go) ·
-ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-30
+ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-31
 confirmed (Round 4 landed 09-01) · course deadlines re-verified 09-08 against the official
 作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
 public-demo post · 9.8 try-3-works feedback (**due today 23:59**) · 9.10 课堂展示 · 9.13
