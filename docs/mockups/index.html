@@ -210,6 +210,46 @@
   .regen-line .cmd { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
   .table-foot { margin-top: 10px; font-size: 12px; color: var(--fg-dim); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 
+  /* Review — exception-centered */
+  .review-hero { display: flex; gap: 18px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 14px; }
+  .rh-num { font-size: 40px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px; color: var(--teal); flex-shrink: 0; }
+  .rh-copy .rh-title { font-size: 16px; font-weight: 650; margin-bottom: 4px; }
+  .rh-copy .rh-title .en { font-size: 12px; color: var(--fg-dim); font-weight: 400; margin-left: 6px; }
+  .rh-copy .rh-sub { font-size: 13px; color: var(--fg-dim); }
+  .rh-copy .rh-sub .en { font-size: 11px; }
+  .already-safe { display: flex; align-items: center; gap: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 8px; cursor: pointer; }
+  .already-safe:hover { border-color: var(--border); background: var(--surface-3); }
+  .already-safe .as-left { display: flex; gap: 8px; }
+  .already-safe .as-mid { flex: 1; font-size: 13px; }
+  .already-safe .as-mid .en { font-size: 11px; color: var(--fg-faint); margin-left: 8px; }
+  .already-safe .as-right { font-size: 12px; color: var(--fg-dim); }
+  .already-safe .chev { display: inline-block; transition: transform .15s ease; }
+  .already-safe .chev.open { transform: rotate(180deg); }
+  .safe-drawer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 14px 10px; margin-bottom: 16px; }
+  .sd-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-soft); font-size: 12px; }
+  .sd-row:last-of-type { border-bottom: none; }
+  .sd-path { flex: 1; font-family: var(--mono); color: var(--fg-dim); }
+  .sd-bytes { font-family: var(--mono); color: var(--fg-dim); }
+  .sd-note { font-size: 11px; color: var(--fg-faint); padding-top: 6px; }
+  .judgment-head { font-size: 14px; margin: 6px 0 10px; display: flex; align-items: baseline; gap: 8px; }
+  .judgment-head .en { font-size: 11px; color: var(--fg-faint); font-weight: 400; }
+  .judge-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+  .judge-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); cursor: pointer; font-size: 13px; }
+  .judge-row:last-child { border-bottom: none; }
+  .judge-row:hover { background: var(--surface-2); }
+  .judge-row.open { background: var(--surface-3); }
+  .jr-toggle { width: 14px; text-align: center; color: var(--fg-faint); }
+  .jr-toggle .chev { display: inline-block; transition: transform .15s ease; }
+  .jr-toggle .chev.open { transform: rotate(90deg); }
+  .jr-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+  .jr-bytes { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
+  .jr-action { flex-shrink: 0; }
+  .jr-action.included { background: var(--teal); color: #06231d; border-color: transparent; }
+  .jr-refuse { flex-shrink: 0; font-size: 11px; color: var(--fg-faint); }
+  .jr-detail { display: none; padding: 8px 14px 12px 38px; background: var(--surface-2); border-bottom: 1px solid var(--border-soft); }
+  .jr-detail .ev-row { border-bottom: 1px solid var(--border-soft); }
+  .jr-detail.open { display: block; }
+
   /* Plan */
   .plan-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px; }
   .plan-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
@@ -385,32 +425,95 @@
 
       <!-- ── Review ── -->
       <section class="screen" id="screen-review">
-        <div class="screen-head"><h1>审核 Review</h1><span class="sub">214 候选 candidates · 19.3 GB</span></div>
-        <div class="review-layout">
-          <div class="table-col">
-            <div class="toolbar">
-              <button class="btn ghost small">筛选 Filter ▾</button>
-              <button class="btn ghost small">排序 Sort ▾</button>
-              <div class="spacer"></div>
-              <span class="tag">恢复是权利 restore is a right</span>
-            </div>
-            <div class="cand-list" id="candList"></div>
-            <div class="table-foot"><span id="selCount">197/214 已选 selected</span><span class="spacer" style="flex:1"></span>
-              <button class="btn ghost small">在访达中显示 Reveal</button>
-              <button class="btn primary small" onclick="goto('plan')">生成计划 Build plan</button>
-            </div>
-          </div>
-          <div class="evidence-col">
-            <div class="evidence-panel" id="evidencePanel">
-              <h3>证据链 Evidence chain <span class="en">selected candidate</span></h3>
-              <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">锁文件 lockfile:</span> <span class="detail">package-lock.json 比目录新 newer than dir</span></span><span class="strength">强 strong</span></div>
-              <div class="ev-row"><span class="ev-num">②</span><span><span class="kind">祖先 .git 活跃:</span> <span class="detail">HEAD 3 h ago</span></span><span class="strength">强 strong</span></div>
-              <div class="ev-row"><span class="ev-num">③</span><span><span class="kind">mtime 冷却 cool:</span> <span class="detail">6 d 14 h</span></span><span class="strength">中 mid</span></div>
-              <div class="regen-line">重建 Rebuild: <span class="cmd">npm ci ≈ 40 s</span> · 网络 network: 不需要 none</div>
-            </div>
+        <div class="screen-head"><h1>审核 Review</h1><span class="sub">19.3 GB 可回收 recoverable · 0 已销毁 until you confirm</span></div>
+
+        <div class="review-hero">
+          <div class="rh-num">19.3 GB</div>
+          <div class="rh-copy">
+            <div class="rh-title">大部分已经安全 — 只需你确认 4 项 <span class="en">mostly safe — just confirm the rest</span></div>
+            <div class="rh-sub">214 项中 210 项有明确证据判定为安全可回收。剩下 4 项需要你的判断。
+              <span class="en">210 of 214 carry clear evidence they're safe. 4 need your judgment.</span></div>
           </div>
         </div>
+
+        <div class="already-safe" onclick="toggleSafeDrawer()">
+          <div class="as-left">
+            <span class="badge b-green">● 纯缓存 Pure cache</span>
+            <span class="badge b-teal">● 可重建 Rebuildable</span>
+          </div>
+          <div class="as-mid">
+            <b>210 项 · 17.1 GB 已安全判定</b>
+            <span class="en">already judged safe — pre-selected</span>
+          </div>
+          <div class="as-right">看证据 see evidence <span class="chev" id="safeChev">▾</span></div>
+        </div>
+        <div class="safe-drawer" id="safeDrawer" style="display:none">
+          <div class="sd-row"><span class="badge b-teal">● 可重建 Rebuildable</span><span class="sd-path">~/code/api/node_modules</span><span class="sd-bytes">2.1 GB</span></div>
+          <div class="sd-row"><span class="badge b-teal">● 可重建 Rebuildable</span><span class="sd-path">~/Library/Developer/Xcode/DerivedData</span><span class="sd-bytes">6.8 GB</span></div>
+          <div class="sd-row"><span class="badge b-green">● 纯缓存 Pure cache</span><span class="sd-path">~/.npm/_cacache</span><span class="sd-bytes">3.2 GB</span></div>
+          <div class="sd-row"><span class="badge b-green">● 纯缓存 Pure cache</span><span class="sd-path">~/Library/Caches/Homebrew</span><span class="sd-bytes">4.1 GB</span></div>
+          <div class="sd-note">+206 更多 · 证据按需展开 · evidence on demand — nothing hidden</div>
+        </div>
+
+        <div class="judgment-head"><b>需要你判断 Needs your judgment</b><span class="en">· 4 项 · 1.9 GB</span></div>
+
+        <div class="judge-list">
+          <div class="judge-row" onclick="toggleJudge(this)">
+            <div class="jr-toggle"><span class="chev">▸</span></div>
+            <span class="badge b-amber">⚠ 代价高 Expensive</span>
+            <span class="jr-path">~/code/api/node_modules/.cache</span>
+            <span class="jr-bytes">1.4 GB</span>
+            <button class="btn ghost small jr-action" onclick="event.stopPropagation();optIn(this)">纳入 Include</button>
+          </div>
+          <div class="jr-detail" style="display:none">
+            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">mtime 冷却 cool:</span> <span class="detail">12 h</span></span><span class="strength">中 mid</span></div>
+            <div class="ev-row"><span class="ev-num">②</span><span><span class="kind">锁文件 lockfile:</span> <span class="detail">package-lock.json 缺失 missing</span></span><span class="strength">弱 weak</span></div>
+            <div class="regen-line">重建 Rebuild: <span class="cmd">npm ci ≈ 6 min</span> · 网络 network: 需要 yes · 手动纳入 per-entry opt-in</div>
+          </div>
+
+          <div class="judge-row" onclick="toggleJudge(this)">
+            <div class="jr-toggle"><span class="chev">▸</span></div>
+            <span class="badge b-red">🔒 请勿动手 Hands off</span>
+            <span class="jr-path">~/code/api/node_modules/…</span>
+            <span class="jr-bytes">—</span>
+            <span class="jr-refuse">已拒绝 refused</span>
+          </div>
+          <div class="jr-detail" style="display:none">
+            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">正在写入 actively written:</span> <span class="detail">mtime 4 min ago</span></span><span class="strength">强 strong</span></div>
+            <div class="regen-line">判定 REFUSED 拒绝 · 替代 alternative: 稍后重扫 rescan later — never auto-included</div>
+          </div>
+
+          <div class="judge-row" onclick="toggleJudge(this)">
+            <div class="jr-toggle"><span class="chev">▸</span></div>
+            <span class="badge b-red">🔒 请勿动手 Hands off</span>
+            <span class="jr-path">~/code/orphan-project/</span>
+            <span class="jr-bytes">512 MB</span>
+            <span class="jr-refuse">孤儿树 orphan</span>
+          </div>
+          <div class="jr-detail" style="display:none">
+            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">项目已删除? project deleted?:</span> <span class="detail">no package.json in any ancestor</span></span><span class="strength">强 strong</span></div>
+            <div class="regen-line">判定 REFUSED 拒绝 · 替代 alternative: 手动确认后单独处理 review manually — never auto-included</div>
+          </div>
+
+          <div class="judge-row" onclick="toggleJudge(this)">
+            <div class="jr-toggle"><span class="chev">▸</span></div>
+            <span class="badge b-amber">⚠ 代价高 Expensive</span>
+            <span class="jr-path">~/Docker/containers/…</span>
+            <span class="jr-bytes">500 MB</span>
+            <button class="btn ghost small jr-action" onclick="event.stopPropagation();optIn(this)">纳入 Include</button>
+          </div>
+          <div class="jr-detail" style="display:none">
+            <div class="ev-row"><span class="ev-num">①</span><span><span class="kind">可重建 Rebuildable:</span> <span class="detail">镜像 layer 缓存 layer cache</span></span><span class="strength">中 mid</span></div>
+            <div class="regen-line">重建 Rebuild: <span class="cmd">docker pull ≈ 4 min</span> · 网络 network: 需要 yes · 手动纳入 per-entry opt-in</div>
+          </div>
+        </div>
+
+        <div class="table-foot"><span>已选 selected: <b id="reviewSelCount">210 + 0</b> 项 · 19.3 GB · 0 已销毁</span><span class="spacer" style="flex:1"></span>
+          <button class="btn ghost small">在访达中显示 Reveal</button>
+          <button class="btn primary small" onclick="goto('plan')">生成计划 Build plan</button>
+        </div>
       </section>
+
 
       <!-- ── Plan ── -->
       <section class="screen" id="screen-plan">
@@ -581,58 +684,27 @@
   });
 
   // candidates
-  const cands = [
-    {p:'~/code/api/node_modules', g:'teal', b:'可重建 Rebuildable', bytes:'2.1 GB', regen:'npm ci ≈ 40 s', ev:[
-      ['锁文件 lockfile','package-lock.json 比目录新 newer than dir','强 strong'],
-      ['祖先 .git 活跃','HEAD 3 h ago','强 strong'],
-      ['mtime 冷却 cool','6 d 14 h','中 mid']], regen:'npm ci ≈ 40 s', net:'不需要 none'},
-    {p:'~/Library/Developer/Xcode/DerivedData', g:'teal', b:'可重建 Rebuildable', bytes:'6.8 GB', regen:'rebuild ≈ 90 s', ev:[
-      ['构建指纹 stale','无匹配 toolchain 的产物','强 strong'],
-      ['mtime 冷却 cool','21 d 3 h','强 strong']], regen:'xcodebuild ≈ 90 s', net:'不需要 none'},
-    {p:'~/.npm/_cacache', g:'green', b:'纯缓存 Pure cache (CAS)', bytes:'3.2 GB', regen:'', ev:[
-      ['CAS 内容寻址','全部为 npm 缓存镜像','强 strong'],
-      ['上游可达 upstream','registry.npmjs.org ✓','强 strong']], regen:'npm install 重新拉取', net:'需要 yes'},
-    {p:'~/code/api/node_modules/.cache', g:'amber', b:'⚠ 代价高 Expensive', bytes:'1.4 GB', regen:'重装 ≈ 6 min', ev:[
-      ['mtime 冷却 cool','12 h','中 mid'],
-      ['锁文件 lockfile','package-lock.json 缺失 missing','弱 weak']], regen:'npm ci ≈ 6 min', net:'需要 yes'},
-    {p:'~/code/api/node_modules/…', g:'red', b:'🔒 请勿动手 Hands off', bytes:'—', regen:'', ev:[
-      ['正在写入 actively written','mtime 4 min ago','强 strong']], regen:'—', net:'—'},
-    {p:'~/Library/Caches/Homebrew', g:'green', b:'纯缓存 Pure cache', bytes:'4.1 GB', regen:'', ev:[
-      ['brew cache','可重下载 redownloadable','强 strong']], regen:'brew cleanup --prune=90d', net:'需要 yes'}
-  ];
-  const badgeCls = {green:'b-green', teal:'b-teal', blue:'b-blue', amber:'b-amber', red:'b-red'};
-  const selected = new Set([0,1,2,3]);
-  function renderCands(){
-    const list = document.getElementById('candList');
-    list.innerHTML = '';
-    cands.forEach((c,i)=>{
-      const row = document.createElement('div');
-      row.className = 'cand-row' + (c.g==='red'?' refused':'') + (selected.has(i)?' selected':'');
-      row.innerHTML = `
-        <div class="check ${selected.has(i)?'on':'off'}">${selected.has(i)?'✓':''}</div>
-        <span class="badge ${badgeCls[c.g]}">${c.b.replace(' Pure cache','').replace(' (CAS)','')}</span>
-        <span class="path">${c.p}</span>
-        <span class="regen">${c.regen}</span>
-        <span class="bytes">${c.bytes}</span>`;
-      if (c.g!=='red') row.addEventListener('click', ()=>{
-        selected.has(i) ? selected.delete(i) : selected.add(i);
-        renderCands(); showEvidence(i);
-      });
-      row.addEventListener('click', ()=>{ showEvidence(i); });
-      list.appendChild(row);
-    });
-    document.getElementById('selCount').textContent = selected.size + '/214 已选 selected';
+  // Review — exception-centered
+  function toggleSafeDrawer(){
+    const d = document.getElementById('safeDrawer'), c = document.getElementById('safeChev');
+    d.style.display = d.style.display==='none' ? 'block' : 'none';
+    c.classList.toggle('open');
   }
-  function showEvidence(i){
-    const c = cands[i];
-    if (!c || !c.ev) return;
-    const p = document.getElementById('evidencePanel');
-    p.innerHTML = `<h3>证据链 Evidence chain <span class="en">${c.b}</span></h3>` +
-      c.ev.map((e,j)=>`<div class="ev-row"><span class="ev-num">${'①②③④'[j]||(j+1)}</span><span><span class="kind">${e[0]}:</span> <span class="detail">${e[1]}</span></span><span class="strength">${e[2]}</span></div>`).join('') +
-      `<div class="regen-line">重建 Rebuild: <span class="cmd">${c.regen||'—'}</span> · 网络 network: ${c.net||'—'}</div>`;
+  function toggleJudge(row){
+    row.classList.toggle('open');
+    const det = row.nextElementSibling;
+    if (det && det.classList.contains('jr-detail')) {
+      det.classList.toggle('open');
+      det.style.display = det.classList.contains('open') ? 'block' : 'none';
+    }
+    row.querySelector('.jr-toggle .chev').classList.toggle('open');
   }
-  renderCands();
-  showEvidence(0);
+  let optIns = 0;
+  function optIn(btn){
+    btn.classList.toggle('included');
+    optIns = btn.classList.contains('included') ? optIns+1 : optIns-1;
+    document.getElementById('reviewSelCount').textContent = `210 + ${optIns}`;
+  }
 </script>
 </body>
 </html>
