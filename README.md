@@ -1,20 +1,18 @@
-# Disk Janitor 「还我磁盘」
+# 还我磁盘 Giveback
 
 **A disk-cleanup app that tells you what's safe to delete, shows the evidence, and
-lets you undo everything.** Native macOS/Windows/Linux desktop app (Tauri + Rust).
-Course project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026
-summer term — built as a real product first.
+lets you undo everything.** Native macOS desktop app (Tauri + Svelte + Rust). Course
+project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026 summer term.
 
-**Status: design complete (21 research notes, 17/17 ADRs owner-stamped, full UX spec +
-interactive visual mockup [`docs/mockups/`](docs/mockups/)) —
-implementation 0% — M1 awaits the owner's go.** Start reading at
-[`docs/SPEC.md`](docs/SPEC.md) (Part A = overview).
+**Status: M1–M4 implemented and verified (91 tests green across 13 suites; CLI + GUI
+flows proven end-to-end) — M5 is the 9.13 submission deliverables, tracked in
+[`docs/deliverables-checklist.md`](docs/deliverables-checklist.md).** Start reading at
+[`docs/SPEC.md`](docs/SPEC.md) (Part A = overview; History keeps the real timeline).
 
 ## Why this exists
 
 `du` tells you *where* the bytes are; it never tells you whether they are *safe to
-remove*. Every existing tool — DaisyDisk, CleanMyMac, dua-cli — stops at byte
-locations or black-box verdicts. Disk Janitor:
+remove*. Every existing tool stops at byte locations or black-box verdicts. Disk Janitor:
 
 1. **Judges with evidence, not names** — every candidate carries an inspectable
    evidence chain (lockfile present? sibling manifest gone? written 3 min ago →
@@ -22,31 +20,64 @@ locations or black-box verdicts. Disk Janitor:
 2. **Makes deletion reversible by default** — `apply` moves to an on-volume
    quarantine (atomic, zero bytes freed); `purge` requires typing the exact byte
    count; 72-hour `restore` is one command. 删除是操作，恢复是权利。
-3. **Keeps memory** — an append-only JSONL ledger remembers every verdict and
+3. **Keeps memory** — an append-only JSONL ledger (台账) remembers every verdict and
    operation across sessions, so the tool never re-judges from zero.
 4. **Uses AI without giving it authority** — the agent understands "腾出 25GB，别动
    我这两周在跑的项目" and proposes plans, but never deletes; it never even sees a
    file path (privacy chokepoint + CI leak test).
 
-## Documentation
+## What works today (M1–M4)
 
-**One spec, one decision log, one evidence archive.**
+- **`janitor scan --json` CLI** — dua-core 3.3.0 macOS walker, deterministic
+  candidate ids, evidence engine, rebuild-cost grades [9f4cb7c].
+- **plan / apply / purge / restore** — `renamex_np` on-volume quarantine (atomic,
+  no-clobber), crc32-framed JSONL WAL + `flock`, append-only ledger; **kill -9 at
+  any point recovers cleanly** [9fd33f1, 17647bb].
+- **GUI (Tauri 2.11.5 + Svelte 5)** — dashboard / scan / review / plan / ledger /
+  purge-gate / settings, zh-en i18n; full flow verified in the window: scan 51 →
+  plan 44 → apply 17.7 GB → typed-gate purge → restore [abda22c].
+- **NL policy (MTA)** — 「腾出 25 GB」 → plan (3 quarantine / 4 refuse) → apply →
+  recover → restore end-to-end; 「别动我这两周在跑的项目」 protects project
+  activity via `.git/HEAD`, exempts build outputs [95f2fbb].
+- **AI without authority** — sans-IO agent proposes plans only; path-blind
+  chokepoint, budget interrupts, leak tests [8934f5f]; config.toml + env overrides
+  + redact() [a69a862].
+- **Typed-byte purge gate** — purge demands the exact byte count typed.
+
+## Quickstart
+
+```bash
+cargo build                             # Rust core: scan/classify/plan/execute/ledger/agent/config
+./target/debug/janitor scan --help      # CLI: scan/plan/apply/purge/restore (+ --json)
+cd app && bun install && bun run dev    # Svelte 5 frontend (Vite dev server, port 1420)
+cd src-tauri && cargo run               # Tauri shell (expects the dev server above)
+```
+
+## Test / gate commands
+
+```bash
+cargo fmt --check && cargo clippy -D warnings && cargo test   # 91 tests, 13 suites (fixture trees only)
+```
+
+## Milestones
+
+| Milestone | Status | Evidence |
+|---|---|---|
+| M1 scan + classify core | ✅ | 9f4cb7c (dua-core 3.3.0 pin, syscall tests, fixture generator) |
+| M2 plan/execute + WAL + ledger | ✅ | 9fd33f1, 17647bb (crash injection, restore keep-both, non-UTF8 refusal) |
+| M3 GUI shell | ✅ | abda22c (Tauri 2.11.5, 10 IPC commands, writable-vol dedup) |
+| M4 config + agent + cost | ✅ | a69a862, 8934f5f, 95f2fbb (NL policy E2E 腾出 25 GB) |
+| M5 submission deliverables | 🔄 | [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md) |
+
+## Documentation
 
 | Doc | Contents |
 |---|---|
-| [`docs/SPEC.md`](docs/SPEC.md) | **the single source of truth** — Part A product & vision · Part B technical design · Part C UX design · Part D dependencies · status & milestones |
-| [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs (every architectural decision + owner verdicts) + the D-01…D-31 decision register as appendix |
-| [`docs/research/`](docs/research/) | 21 verified research notes + `archive/` (competitor survey) — immutable evidence, cited as [NN] |
-
-Read SPEC.md top-to-bottom once; after that it's the reference you grep.
-
-## Build (once implementation starts)
-
-```bash
-cargo build          # Rust core (scan/classify/execute/ledger/agent)
-cargo test           # unit + integration (fixture trees only, never real user data)
-cargo tauri dev       # Tauri app (frontend; bun 1.3 present, npm/pnpm also work) — SPEC.md Part C
-```
+| [`docs/SPEC.md`](docs/SPEC.md) | **single source of truth** — Parts A product · B technical · C UX · D dependencies, status & milestones |
+| [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs + the D-01…D-31 decision register (appendix) |
+| [`docs/research/`](docs/research/) | 21 verified research notes + `archive/` (competitor survey), cited as [NN] |
+| [`docs/ai-logs/`](docs/ai-logs/) | per-milestone AI conversation excerpts (graded deliverable, redacted) |
+| [`docs/expense-sheet.md`](docs/expense-sheet.md) | 开销明细表 — cost breakdown by phase (graded deliverable) |
 
 ## License / provenance
 

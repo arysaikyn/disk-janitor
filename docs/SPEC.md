@@ -7,7 +7,8 @@
 > Course: 程序设计训练（Rust 语言）(30240522-3), THU CS. Keep this file in sync with the
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
-**Status snapshot (2026-09-08):** design 100% · implementation 0% (M1 awaits owner go) ·
+**Status snapshot (2026-09-08; updated 2026-09-10):** design 100% · implementation M1–M4 done
+(91 tests green; M5 = submission deliverables in progress) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-31
 confirmed (Round 4 landed 09-01) · course deadlines re-verified 09-08 against the official
 作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
@@ -300,7 +301,7 @@ amended in the same pass.
 | Research (21 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged) |
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
-| **Implementation** | ❌ **0% — starts at M1 on owner's go** |
+| **Implementation** | ✅ **M1–M4 done** — 91 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-10) |
 | **09-10 课堂展示** (5 min demo + 2 min Q&A; 25 pts) | ⚠ prep not started — competitor/presentation research ready (note 13) |
 | **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ **due today** — verify posted; 09-06 public-demo post status also needs check |
 
