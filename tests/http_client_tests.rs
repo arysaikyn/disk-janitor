@@ -396,3 +396,68 @@ fn missing_api_key_is_an_error() {
         "got: {err}"
     );
 }
+
+/// (e) E2: a trailing slash on the endpoint is trimmed (defensive trim in `new`,
+/// mirroring `Config::load`) — the stub is hit exactly once, on `/chat/completions`,
+/// never on `//chat/completions`.
+#[test]
+fn trailing_slash_endpoint_is_trimmed() {
+    let stub = spawn_stub(vec![(200, HAPPY)]);
+    let mut c = cfg(&stub.url);
+    c.endpoint = format!("{}/", stub.url); // user wrote a trailing slash
+    let client = HttpChatClient::new(c).expect("client");
+    let reply = client.complete(&msgs(), &tool_defs()).expect("complete");
+    assert_eq!(reply.tool_calls.len(), 2);
+
+    let requests = stub.requests();
+    assert_eq!(requests.len(), 1, "exactly one request");
+    let (head, _) = &requests[0];
+    assert!(
+        head.starts_with("POST /chat/completions HTTP/1.1"),
+        "expected single-slash path, got: {head}"
+    );
+    assert!(!head.starts_with("POST //"), "double slash joined: {head}");
+    assert_eq!(stub.served(), 1);
+}
+
+/// (f) E5: an assistant message with empty content AND no tool calls must be sent
+/// with `content: ""` (never null) — resume-safe for strict providers. Tool-call
+/// echoes (content empty, calls present) still omit content entirely.
+#[test]
+fn empty_assistant_message_sends_empty_content() {
+    let stub = spawn_stub(vec![(200, STOP)]);
+    let mut trajectory = msgs();
+    trajectory.push(Msg {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+    });
+    let client = HttpChatClient::new(cfg(&stub.url)).expect("client");
+    let reply = client
+        .complete(&trajectory, &tool_defs())
+        .expect("complete");
+    assert_eq!(
+        reply.content.as_deref(),
+        Some("plan ready: build_plan, then apply_plan")
+    );
+
+    let requests = stub.requests();
+    assert_eq!(requests.len(), 1);
+    let (_, body) = &requests[0];
+    let messages = body["messages"].as_array().unwrap();
+    // The pushed empty assistant message is the last one.
+    let m = &messages[messages.len() - 1];
+    assert_eq!(m["role"], "assistant");
+    assert_eq!(
+        m["content"], "",
+        "expected empty-string content, got {}",
+        m["content"]
+    );
+    // ...and its tool_calls are absent (not an echoed call list).
+    assert!(
+        m.get("tool_calls").is_none() || m["tool_calls"].is_null(),
+        "unexpected tool_calls: {}",
+        m
+    );
+}

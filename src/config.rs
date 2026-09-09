@@ -14,50 +14,107 @@ pub struct ModelPrice {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Budget {
+    #[serde(default = "default_cost_usd")]
     pub cost_usd: f64,
+    #[serde(default = "default_max_turns")]
     pub max_turns: u32,
+    #[serde(default = "default_tokens")]
     pub tokens: u64,
+}
+
+fn default_cost_usd() -> f64 {
+    1.0
+}
+fn default_max_turns() -> u32 {
+    12
+}
+fn default_tokens() -> u64 {
+    200_000
 }
 
 impl Default for Budget {
     fn default() -> Self {
         Self {
-            cost_usd: 1.0,
-            max_turns: 12,
-            tokens: 200_000,
+            cost_usd: default_cost_usd(),
+            max_turns: default_max_turns(),
+            tokens: default_tokens(),
         }
     }
 }
 
 /// R3 config: endpoint, key, model, ctx len, thinking mode, prices, budget (§3.9).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Every field carries `#[serde(default)]` so a PARTIAL config.toml merges over
+/// `Config::default()` instead of hard-erroring with "missing field" (E1).
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default = "default_endpoint")]
     pub endpoint: String,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub api_key: Option<String>,
+    #[serde(default = "default_model")]
     pub model: String,
+    #[serde(default = "default_ctx_len")]
     pub ctx_len: u32,
+    #[serde(default)]
     pub thinking: bool,
+    #[serde(default = "default_prices")]
     pub prices: Vec<ModelPrice>,
+    #[serde(default)]
     pub budget: Budget,
+}
+
+fn default_endpoint() -> String {
+    "https://api.deepseek.com/v1".into()
+}
+fn default_model() -> String {
+    "deepseek-chat".into()
+}
+fn default_ctx_len() -> u32 {
+    65_536
+}
+fn default_prices() -> Vec<ModelPrice> {
+    vec![ModelPrice {
+        model: "deepseek-chat".into(),
+        prompt_miss_per_1m: 0.27,
+        prompt_hit_per_1m: 0.07,
+        completion_per_1m: 1.10,
+    }]
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            endpoint: "https://api.deepseek.com/v1".into(),
+            endpoint: default_endpoint(),
             api_key: None,
-            model: "deepseek-chat".into(),
-            ctx_len: 65_536,
+            model: default_model(),
+            ctx_len: default_ctx_len(),
             thinking: false,
-            prices: vec![ModelPrice {
-                model: "deepseek-chat".into(),
-                prompt_miss_per_1m: 0.27,
-                prompt_hit_per_1m: 0.07,
-                completion_per_1m: 1.10,
-            }],
+            prices: default_prices(),
             budget: Budget::default(),
         }
+    }
+}
+
+/// Manual Debug: the API key NEVER appears — same `***`/`none` shape as `redact()`
+/// (E3; the old derive printed the raw key).
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("endpoint", &self.endpoint)
+            .field(
+                "api_key",
+                &(if self.api_key.is_some() {
+                    "***"
+                } else {
+                    "none"
+                }),
+            )
+            .field("model", &self.model)
+            .field("ctx_len", &self.ctx_len)
+            .field("thinking", &self.thinking)
+            .field("prices", &self.prices)
+            .field("budget", &self.budget)
+            .finish()
     }
 }
 
@@ -93,7 +150,18 @@ pub fn load() -> Result<Config, ConfigError> {
     {
         cfg.budget.cost_usd = v;
     }
+    // E2: strip any trailing '/' so async-openai's unconditional `/chat/completions`
+    // join never produces `//chat/completions` (applies to file, env, and default).
+    cfg.endpoint = trim_endpoint(&cfg.endpoint);
     Ok(cfg)
+}
+
+/// Normalize a base URL: strip trailing '/' chars (E2). async-openai always appends
+/// `/chat/completions` to the configured base, so `…/v1/` would 404 on
+/// `//chat/completions`. `HttpChatClient::new` also calls this defensively, in case a
+/// caller builds a `Config` by hand instead of through `load`.
+pub fn trim_endpoint(endpoint: &str) -> String {
+    endpoint.trim_end_matches('/').to_string()
 }
 
 pub fn config_path() -> Option<std::path::PathBuf> {

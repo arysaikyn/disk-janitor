@@ -85,11 +85,12 @@ pub enum LedgerRecord {
         duration_ms: u64,
         session_id: String,
     },
+    /// The run-level agent recommendation (`record_verdict` control tool, persisted
+    /// by `AgentRun::finish`): verdict text + optional reason, tagged with the model.
     Verdict {
-        path_hash: PathHash,
-        size: u64,
-        grade: crate::Grade,
-        evidence: Vec<crate::Evidence>,
+        verdict: String,
+        reason: Option<String>,
+        model: String,
     },
     Plan {
         plan_id: String,

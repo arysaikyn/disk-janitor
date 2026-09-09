@@ -209,6 +209,14 @@ fn budget_recs(home: &Path) -> Vec<LedgerRecord> {
         .collect()
 }
 
+fn verdict_recs(home: &Path) -> Vec<LedgerRecord> {
+    let (recs, _) = ledger::replay(&home.join("ledger.jsonl")).expect("replay");
+    recs.into_iter()
+        .filter(|r| r.kind == Kind::Verdict)
+        .map(|r| r.rec)
+        .collect()
+}
+
 // --- happy path ---------------------------------------------------------------------
 
 /// User intent → scan_summary → candidates → build_plan → record_verdict → Done.
@@ -303,9 +311,57 @@ fn happy_path_reaches_verdict() {
         }
         other => panic!("expected Budget rec, got {other:?}"),
     }
-    // finish is idempotent: a second call appends nothing.
+
+    // E4: record_verdict persists exactly ONE run-level Verdict rec, model-tagged.
+    let verdicts = verdict_recs(home.path());
+    assert_eq!(verdicts.len(), 1);
+    match &verdicts[0] {
+        LedgerRecord::Verdict {
+            verdict,
+            reason,
+            model,
+        } => {
+            assert_eq!(verdict, "proceed");
+            assert_eq!(reason.as_deref(), Some("target met"));
+            assert_eq!(model, "test-model");
+        }
+        other => panic!("expected Verdict rec, got {other:?}"),
+    }
+
+    // finish is idempotent: a second call appends nothing (budget OR verdict).
     run.finish(&mut ctx).unwrap();
     assert_eq!(budget_recs(home.path()).len(), 1);
+    assert_eq!(verdict_recs(home.path()).len(), 1);
+}
+
+/// E4: a natural-stop run (final text, NO record_verdict call) posts the Budget rec
+/// but NO Verdict rec — the verdict only exists when the model actually recorded one.
+#[test]
+fn natural_stop_writes_no_verdict_rec() {
+    let home = tempfile::tempdir().unwrap();
+    let mut run = agent::AgentRun::new(
+        "natural stop",
+        "test-model",
+        vec![price()],
+        Budget::default(),
+    );
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+    let client = StubClient::new(vec![Box::new(|_| final_text("nothing to reclaim"))]);
+
+    let (done, _) = drive(&mut run, &client, &mut ctx);
+    assert_eq!(
+        done,
+        RunState::Done {
+            reason: StopReason::ModelStop
+        }
+    );
+    run.finish(&mut ctx).unwrap();
+    assert_eq!(
+        verdict_recs(home.path()).len(),
+        0,
+        "no record_verdict call → no Verdict rec"
+    );
+    assert_eq!(budget_recs(home.path()).len(), 1, "Budget rec still posted");
 }
 
 /// apply_plan/restore_op are PROPOSE-ONLY (D-01): they return awaiting=human-confirm

@@ -501,11 +501,23 @@ impl AgentRun {
         }
     }
 
-    /// When the run has ended (any Done), append ONE cumulative Budget record to the
-    /// ledger (D-20 model field). Idempotent: the run posts at most once.
+    /// When the run has ended (any Done), append the run's verdict (if the
+    /// `record_verdict` control tool was called) plus ONE cumulative Budget record
+    /// to the ledger (D-20 model field). Idempotent: the run posts at most once.
     pub fn finish(&mut self, ctx: &mut SessionCtx) -> anyhow::Result<()> {
         if self.ledger_posted || !matches!(self.state, RunState::Done { .. }) {
             return Ok(());
+        }
+        // E4: `record_verdict` used to only echo into history — persist the verdict.
+        if let Some((verdict, reason)) = self.recorded_verdict() {
+            ctx.ledger.append(
+                Kind::Verdict,
+                &LedgerRecord::Verdict {
+                    verdict,
+                    reason,
+                    model: self.model.clone(),
+                },
+            )?;
         }
         let rec = LedgerRecord::Budget {
             model: self.model.clone(),
@@ -517,6 +529,26 @@ impl AgentRun {
         ctx.ledger.append(Kind::Budget, &rec)?;
         self.ledger_posted = true;
         Ok(())
+    }
+
+    /// The last `record_verdict` tool result in the trajectory, if any:
+    /// `(verdict, reason)`. Tool results live in history as serialized `ToolOutput`
+    /// (`{"t":"verdict_recorded",…}`), so no extra run field is needed (E4).
+    fn recorded_verdict(&self) -> Option<(String, Option<String>)> {
+        self.history.iter().rev().find_map(|m| {
+            if m.role != Role::Tool {
+                return None;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&m.content) else {
+                return None;
+            };
+            if v.get("t").and_then(|t| t.as_str()) != Some("verdict_recorded") {
+                return None;
+            }
+            let verdict = v.get("verdict")?.as_str()?.to_string();
+            let reason = v.get("reason").and_then(|r| r.as_str()).map(str::to_string);
+            Some((verdict, reason))
+        })
     }
 
     fn budget_stop(&self) -> Option<StopReason> {

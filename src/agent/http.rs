@@ -58,8 +58,10 @@ impl HttpChatClient {
         })?;
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| AgentError::Model(format!("tokio runtime: {e}")))?;
+        // E2: defensive trim — `Config::load` already normalizes, but a hand-built
+        // Config may carry a trailing '/' (async-openai would join `//chat/completions`).
         let openai_cfg = OpenAIConfig::new()
-            .with_api_base(cfg.endpoint)
+            .with_api_base(crate::config::trim_endpoint(&cfg.endpoint))
             .with_api_key(api_key);
         Ok(Self {
             client: OpenAIClient::with_config(openai_cfg),
@@ -138,35 +140,46 @@ fn to_wire_msg(m: &Msg) -> ChatCompletionRequestMessage {
             ..Default::default()
         }),
         Role::Assistant => {
-            ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
-                content: if m.content.is_empty() {
-                    None // never send `content: ""` on tool-call echo messages
-                } else {
+            // E5: an assistant message with BOTH content and tool_calls null is
+            // invalid for strict providers (resume-safety) — send `""` when there is
+            // nothing else to say. Tool-call echoes still omit content entirely.
+            let content = if m.content.is_empty() {
+                if m.tool_calls.is_empty() {
                     Some(ChatCompletionRequestAssistantMessageContent::Text(
-                        m.content.clone(),
+                        String::new(),
                     ))
-                },
-                // The OpenAI protocol requires echoing the assistant's calls verbatim.
-                tool_calls: if m.tool_calls.is_empty() {
-                    None
                 } else {
-                    Some(
-                        m.tool_calls
-                            .iter()
-                            .map(|c| {
-                                ChatCompletionMessageToolCalls::Function(
-                                    ChatCompletionMessageToolCall {
-                                        id: c.id.clone(),
-                                        function: FunctionCall {
-                                            name: c.name.clone(),
-                                            arguments: c.arguments.to_string(),
-                                        },
+                    None // never send `content: ""` on tool-call echo messages
+                }
+            } else {
+                Some(ChatCompletionRequestAssistantMessageContent::Text(
+                    m.content.clone(),
+                ))
+            };
+            // The OpenAI protocol requires echoing the assistant's calls verbatim.
+            let tool_calls = if m.tool_calls.is_empty() {
+                None
+            } else {
+                Some(
+                    m.tool_calls
+                        .iter()
+                        .map(|c| {
+                            ChatCompletionMessageToolCalls::Function(
+                                ChatCompletionMessageToolCall {
+                                    id: c.id.clone(),
+                                    function: FunctionCall {
+                                        name: c.name.clone(),
+                                        arguments: c.arguments.to_string(),
                                     },
-                                )
-                            })
-                            .collect(),
-                    )
-                },
+                                },
+                            )
+                        })
+                        .collect(),
+                )
+            };
+            ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
+                content,
+                tool_calls,
                 ..Default::default()
             })
         }

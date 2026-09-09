@@ -8,9 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use disk_janitor::ledger::{self, Kind, LedgerRecord};
-use disk_janitor::{
-    Evidence, EvidenceKind, Grade, PlanAction, PlanEntry, Strength, WalEntry, WalKind,
-};
+use disk_janitor::{Grade, PlanAction, PlanEntry, WalEntry, WalKind};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -39,14 +37,9 @@ fn sample_scan(i: u64) -> LedgerRecord {
 
 fn sample_verdict(i: u64) -> LedgerRecord {
     LedgerRecord::Verdict {
-        path_hash: [i as u8; 8],
-        size: i * 1024,
-        grade: Grade::Redownloadable,
-        evidence: vec![Evidence {
-            kind: EvidenceKind::CasStore,
-            detail: "test".into(),
-            strength: Strength::Medium,
-        }],
+        verdict: format!("proceed-{i}"),
+        reason: Some(format!("reason-{i}")),
+        model: "deepseek".into(),
     }
 }
 
@@ -76,6 +69,7 @@ fn sample_entry(i: u64) -> PlanEntry {
         grade: Grade::PureCache,
         action: PlanAction::Quarantine,
         evidence: vec![],
+        inode: None,
     }
 }
 
