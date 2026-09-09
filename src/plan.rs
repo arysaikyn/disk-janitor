@@ -151,13 +151,32 @@ fn decide(
         return Some(Refusal::GradeNotAllowed);
     }
     if pc.deny_under_mta_secs > 0 {
-        let hot = match now.duration_since(c.mtime) {
-            Ok(age) => age.as_secs() < pc.deny_under_mta_secs,
-            // mtime in the future ⇒ hottest possible.
-            Err(_) => true,
-        };
-        if hot {
-            return Some(Refusal::MtimeHot);
+        // 「别动我这两周在跑的项目」 targets PROJECT ACTIVITY (SPEC §4 stage 3:
+        // `.git/HEAD` mtimes feed deny_under_mta). Machine-derived build outputs
+        // (node_modules/target/DerivedData/CAS caches — identified by regen/
+        // store evidence) are regenerable without touching a running project:
+        // the exact items 「腾出 25 GB」 exists to free (§4 stages 1–4 quarantine
+        // them under this very sentence). MTA therefore refuses only candidates
+        // WITHOUT such evidence, judged by the ancestor `.git/HEAD` mtime when a
+        // repo ancestor exists, else the candidate's own mtime.
+        let machine_derived = c.evidence.iter().any(|e| {
+            matches!(
+                e.kind,
+                EvidenceKind::LockfilePresent
+                    | EvidenceKind::CasStore
+                    | EvidenceKind::BuildArtifactShape
+            )
+        });
+        if !machine_derived {
+            let activity = ancestor_git_head_mtime(&c.path).unwrap_or(c.mtime);
+            let hot = match now.duration_since(activity) {
+                Ok(age) => age.as_secs() < pc.deny_under_mta_secs,
+                // mtime in the future ⇒ hottest possible.
+                Err(_) => true,
+            };
+            if hot {
+                return Some(Refusal::MtimeHot);
+            }
         }
     }
 
@@ -302,4 +321,18 @@ pub fn summarize(p: &Plan) -> String {
         s.push_str(caveat);
     }
     s
+}
+
+/// Project-activity signal: the mtime of the nearest ancestor `.git/HEAD`
+/// (SPEC §4 stage 3). `None` when the candidate has no `.git` ancestor.
+fn ancestor_git_head_mtime(path: &std::path::Path) -> Option<SystemTime> {
+    let mut cur = path.parent();
+    while let Some(dir) = cur {
+        let head = dir.join(".git").join("HEAD");
+        if let Ok(md) = std::fs::metadata(&head) {
+            return md.modified().ok();
+        }
+        cur = dir.parent();
+    }
+    None
 }
