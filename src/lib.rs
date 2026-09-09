@@ -6,8 +6,10 @@
 //! forbidden without an SPEC/ADR sync.
 
 pub mod classify;
+pub mod execute;
 pub mod ledger;
 pub mod plan;
+pub mod policy;
 pub mod scan;
 
 use std::path::PathBuf;

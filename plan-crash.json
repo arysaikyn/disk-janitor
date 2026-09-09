@@ -1,0 +1,215 @@
+{
+  "plan_id": "08d45d4f-b3f8-468b-b024-4f5ed08033e7",
+  "created_at": "2026-09-09T15:03:57.809473Z",
+  "entries": [
+    {
+      "cid": "C-001",
+      "path": "/tmp/jan-vol4/_cacache",
+      "path_hash": [
+        111,
+        82,
+        154,
+        250,
+        94,
+        200,
+        31,
+        105
+      ],
+      "alloc_bytes": 2129920,
+      "grade": "pure_cache",
+      "action": {
+        "type": "quarantine"
+      },
+      "evidence": [
+        {
+          "kind": "CasStore",
+          "detail": "npm store shape confirmed (content-v2/)",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "cid": "C-002",
+      "path": "/tmp/jan-vol4/demo-app/node_modules",
+      "path_hash": [
+        76,
+        225,
+        155,
+        239,
+        239,
+        226,
+        60,
+        32
+      ],
+      "alloc_bytes": 1048576,
+      "grade": "rebuildable_from_source",
+      "action": {
+        "type": "quarantine"
+      },
+      "evidence": [
+        {
+          "kind": "LockfilePresent",
+          "detail": "lockfile present: /tmp/jan-vol4/demo-app/package-lock.json",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "cid": "C-003",
+      "path": "/tmp/jan-vol4/DerivedData",
+      "path_hash": [
+        2,
+        89,
+        108,
+        117,
+        7,
+        68,
+        83,
+        249
+      ],
+      "alloc_bytes": 794624,
+      "grade": "rebuildable_from_source",
+      "action": {
+        "type": "quarantine"
+      },
+      "evidence": [
+        {
+          "kind": "BuildArtifactShape",
+          "detail": "DerivedData path shape (Xcode build output)",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "cid": "C-004",
+      "path": "/tmp/jan-vol4/.venv",
+      "path_hash": [
+        109,
+        137,
+        181,
+        129,
+        92,
+        39,
+        99,
+        235
+      ],
+      "alloc_bytes": 536576,
+      "grade": "expensive",
+      "action": {
+        "type": "refuse",
+        "reason": "orphan_tree"
+      },
+      "evidence": [
+        {
+          "kind": "OrphanTree",
+          "detail": "no build manifest in any ancestor (project deleted?)",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "cid": "C-005",
+      "path": "/tmp/jan-vol4/orphan-node/node_modules",
+      "path_hash": [
+        24,
+        239,
+        219,
+        71,
+        231,
+        74,
+        173,
+        84
+      ],
+      "alloc_bytes": 131072,
+      "grade": "expensive",
+      "action": {
+        "type": "refuse",
+        "reason": "orphan_tree"
+      },
+      "evidence": [
+        {
+          "kind": "OrphanTree",
+          "detail": "no build manifest in any ancestor (project deleted?)",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "cid": "C-006",
+      "path": "/tmp/jan-vol4/pnpm-linked/node_modules",
+      "path_hash": [
+        94,
+        227,
+        35,
+        252,
+        163,
+        249,
+        67,
+        136
+      ],
+      "alloc_bytes": 65536,
+      "grade": "expensive",
+      "action": {
+        "type": "refuse",
+        "reason": "orphan_tree"
+      },
+      "evidence": [
+        {
+          "kind": "OrphanTree",
+          "detail": "no build manifest in any ancestor (project deleted?)",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "cid": "C-007",
+      "path": "/tmp/jan-vol4/hot-project/node_modules",
+      "path_hash": [
+        202,
+        52,
+        24,
+        105,
+        32,
+        82,
+        133,
+        2
+      ],
+      "alloc_bytes": 65536,
+      "grade": "hands_off",
+      "action": {
+        "type": "refuse",
+        "reason": "mtime_hot"
+      },
+      "evidence": [
+        {
+          "kind": "MtimeHot",
+          "detail": "subtree written within hot-mtime window",
+          "strength": "strong"
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "quarantine_bytes": 3973120,
+    "quarantine_entries": 3,
+    "prune_bytes": 0,
+    "prune_cmds": 0,
+    "refused": 4,
+    "snapshot_caveat": "Time Machine local snapshots active (1 on /); reclaimed space may be pinned until the snapshots expire"
+  },
+  "policy_snapshot": {
+    "target_bytes": null,
+    "min_bytes": 65536,
+    "allow_grades": [
+      "pure_cache",
+      "rebuildable_from_source",
+      "redownloadable"
+    ],
+    "deny_globs": [],
+    "deny_under_mta_secs": 0,
+    "allow_network_regen": true,
+    "allow_prune_commands": true,
+    "grace_hours": 72,
+    "max_entries": 10000
+  }
+}

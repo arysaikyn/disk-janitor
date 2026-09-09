@@ -222,6 +222,11 @@ pub fn volumes() -> Vec<VolumeInfo> {
         let free_raw = d.available_space();
         // TODO(M3): CFURL volumeImportantUsage keys per [04 §sysinfo]
         let free_important = free_raw;
+        let ro = d.is_read_only()
+            // sysinfo's is_read_only() is statfs MNT_RDONLY — truthful per mount, but the
+            // sealed-system `/` reports RO while firmlinked writes land on the Data slice
+            // (same st_dev). Probe actual writability: create+remove a temp file.
+            && !is_writable(&mount);
         out.push(VolumeInfo {
             dev,
             mount,
@@ -230,7 +235,7 @@ pub fn volumes() -> Vec<VolumeInfo> {
             free_raw,
             free_important,
             free_opportunistic: 0, // TODO(M3): NSURLVolumeAvailableCapacityForOpportunisticUsageKey
-            read_only: d.is_read_only(),
+            read_only: ro,
             rename_excl,
         });
     }
@@ -239,4 +244,22 @@ pub fn volumes() -> Vec<VolumeInfo> {
 
 fn dev_of(path: &std::path::Path) -> Option<u64> {
     std::os::unix::fs::MetadataExt::dev(&std::fs::metadata(path).ok()?).into()
+}
+
+/// Writability probe: create+remove a unique temp file in `dir`. Detects the
+/// firmlink case where a read-only-looking mount accepts writes (sealed-system
+/// `/` on modern macOS). Failure = read-only for our purposes.
+fn is_writable(dir: &std::path::Path) -> bool {
+    let probe = dir.join(format!(".janitor-ro-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
