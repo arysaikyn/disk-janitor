@@ -6,6 +6,7 @@
 //! forbidden without an SPEC/ADR sync.
 
 pub mod classify;
+pub mod config;
 pub mod execute;
 pub mod ledger;
 pub mod plan;
