@@ -287,6 +287,9 @@ pub mod janitor_plan {
                 for rule in &compiled.applied_rules {
                     eprintln!("policy rule applied: {rule}");
                 }
+                for frag in &compiled.unmatched {
+                    eprintln!("⚠ 未识别的政策片段 (按默认处理): {frag}");
+                }
                 compiled.constraints
             }
             None => PolicyConstraintsShape::default(),
