@@ -146,9 +146,9 @@ fn decide(
         }
         false
     }) {
-        // NOTE: Refusal has no PolicyDeny variant; GradeNotAllowed is the overflow
-        // bucket for policy-level exclusions (see agent report).
-        return Some(Refusal::GradeNotAllowed);
+        // NOTE (D-32, owner 2026-09-10): deny-globs are policy refusals, not grade
+        // refusals — Refusal::PolicyDeny added to the frozen §6 enum.
+        return Some(Refusal::PolicyDeny);
     }
     if pc.deny_under_mta_secs > 0 {
         // 「别动我这两周在跑的项目」 targets PROJECT ACTIVITY (SPEC §4 stage 3:
@@ -180,13 +180,14 @@ fn decide(
         }
     }
 
-    // --- 4. selection caps ------------------------------------------------------
+    // --- 4. selection caps (D-32): target_bytes reached / max_entries hit are
+    // quota refusals, distinguishable from grade refusals in the manifest.
     let target_hit = match pc.target_bytes {
         Some(t) => acc_bytes >= t && quarantine_entries > 0, // keep ≥1 entry
         None => false,
     };
     if target_hit || quarantine_entries >= pc.max_entries {
-        return Some(Refusal::GradeNotAllowed);
+        return Some(Refusal::TargetReached);
     }
 
     None

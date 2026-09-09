@@ -74,6 +74,7 @@ fn run(
         .map(|md| std::os::unix::fs::MetadataExt::dev(&md));
     let cross_fs = opts.cross_filesystems;
     let walk_opts = dua_core::Options {
+        skip_metadata: false,
         apfs_clone_metadata: true,
     };
     let mut totals_files: u64 = 0;
@@ -89,9 +90,9 @@ fn run(
                 if cancel_walk.load(std::sync::atomic::Ordering::Relaxed) {
                     return false;
                 }
-                let md = match &entry.metadata {
-                    Ok(md) => *md,
-                    Err(_) => return false,
+                // 4.0.0: metadata is Option<Result<Metadata>> (skip_metadata=false ⇒ Some)
+                let Some(Ok(md)) = entry.metadata.as_ref() else {
+                    return false;
                 };
                 if !entry.file_type.is_dir() {
                     return false;
@@ -117,7 +118,9 @@ fn run(
             }
             match event {
                 dua_core::RootEvent::Entry(Ok(entry)) => {
-                    let Ok(md) = entry.metadata else { continue };
+                    let Some(Ok(md)) = entry.metadata.as_ref() else {
+                        continue;
+                    };
                     let kind = if entry.file_type.is_dir() {
                         Kind::Dir
                     } else if entry.file_type.is_symlink() {

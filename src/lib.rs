@@ -145,6 +145,10 @@ pub enum Refusal {
     ReadOnly,
     BelowMinBytes,
     GradeNotAllowed,
+    /// Deny-glob hit (D-32: policy refusals distinguishable from grade refusals).
+    PolicyDeny,
+    /// target_bytes reached or max_entries hit (whole-entries-only selection caps).
+    TargetReached,
 }
 
 /// WAL intent record — written + synced BEFORE the mutation — SPEC §6.

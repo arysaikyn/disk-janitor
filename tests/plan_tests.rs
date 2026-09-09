@@ -215,7 +215,7 @@ fn target_bytes_greedy_whole_entries() {
     assert!(action_eq(&plan.entries[1].action, &PlanAction::Quarantine));
     assert!(action_eq(
         &plan.entries[2].action,
-        &refuse(Refusal::GradeNotAllowed)
+        &refuse(Refusal::TargetReached)
     ));
     assert_eq!(plan.totals.quarantine_bytes, 20 * GIB);
     assert_eq!(plan.totals.quarantine_entries, 2);
@@ -254,7 +254,7 @@ fn max_entries_caps_quarantines() {
     assert_eq!(plan.totals.refused, 2);
     assert!(action_eq(
         &plan.entries[2].action,
-        &refuse(Refusal::GradeNotAllowed)
+        &refuse(Refusal::TargetReached)
     ));
 }
 
@@ -286,7 +286,7 @@ fn deny_glob_refuses_path_and_subtree() {
     let plan = plan::build(&[inside, outside], &pc, &vols);
     assert!(action_eq(
         &plan.entries[0].action,
-        &refuse(Refusal::GradeNotAllowed)
+        &refuse(Refusal::PolicyDeny)
     ));
     assert!(action_eq(&plan.entries[1].action, &PlanAction::Quarantine));
 }

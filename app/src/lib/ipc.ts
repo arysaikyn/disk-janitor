@@ -298,10 +298,33 @@ function demo<T>(cmd: string, args?: Record<string, unknown>): T {
   }
 }
 
-/** Typed command call. In plain-browser dev this resolves demo data instead. */
+// ── D-38: backend demo-mode probe (--demo-data launch) ─────────────────────────
+//
+// Inside Tauri the host is asked once; when it reports demo mode, every command
+// resolves the same local fallbacks as the plain-browser path (identical,
+// deterministic payloads for reproducible screen recordings, P7).
+
+let demoMode = false;
+let demoCheck: Promise<boolean> | null = null;
+
+function isDemoMode(): Promise<boolean> {
+  if (!hasTauri()) return Promise.resolve(true);
+  if (!demoCheck) {
+    demoCheck = tauriInvoke<boolean>("is_demo")
+      .then((v) => {
+        demoMode = v;
+        return v;
+      })
+      .catch(() => false); // probe failure degrades to real mode, never fake data
+  }
+  return demoCheck;
+}
+
+/** Typed command call. In plain-browser dev or a --demo-data Tauri launch this
+ * resolves demo data instead. */
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (hasTauri()) return tauriInvoke<T>(cmd, args);
-  return demo<T>(cmd, args);
+  if (!hasTauri() || (demoMode || (await isDemoMode()))) return demo<T>(cmd, args);
+  return tauriInvoke<T>(cmd, args);
 }
 
 // ── typed Channel ────────────────────────────────────────────────────────────
@@ -313,16 +336,16 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
  * settles into its done state (start_scan demo streams extra ticks itself).
  */
 export function channel<T>(onMessage?: (m: T) => void): unknown {
-  if (hasTauri()) {
-    const ch = new TauriChannel<T>();
-    if (onMessage) ch.onmessage = onMessage;
-    return ch;
+  if (!hasTauri() || demoMode) {
+    const shell = { onmessage: onMessage };
+    if (onMessage) {
+      queueMicrotask(() => {
+        onMessage({ t: "finished", files: 0, bytes: 0, elapsed_ms: 0 } as T);
+      });
+    }
+    return shell;
   }
-  const shell = { onmessage: onMessage };
-  if (onMessage) {
-    queueMicrotask(() => {
-      onMessage({ t: "finished", files: 0, bytes: 0, elapsed_ms: 0 } as T);
-    });
-  }
-  return shell;
+  const ch = new TauriChannel<T>();
+  if (onMessage) ch.onmessage = onMessage;
+  return ch;
 }

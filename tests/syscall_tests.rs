@@ -133,11 +133,14 @@ fn walk_roots_st_dev_reject_does_not_escape_root() {
         2,
         dua_core::Order::ParentFirst,
         dua_core::Options {
+            skip_metadata: false,
             apfs_clone_metadata: true,
         },
         // Same descend contract as scan::platform::macos::run: dirs only, same st_dev.
         move |_idx, e: &dua_core::Entry| {
-            let Ok(md) = &e.metadata else { return false };
+            let Some(Ok(md)) = e.metadata.as_ref() else {
+                return false;
+            };
             e.file_type.is_dir() && md.dev() == root_dev
         },
     ) {
@@ -178,6 +181,7 @@ fn walk_roots_counts_files_on_synthetic_tree() {
         2,
         dua_core::Order::ParentFirst,
         dua_core::Options {
+            skip_metadata: false,
             apfs_clone_metadata: true,
         },
         |_idx, _e| true,

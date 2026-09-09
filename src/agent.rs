@@ -1164,3 +1164,9 @@ mod leak_tests {
         assert!((cost_of(&u2, &p) - 0.82).abs() < 1e-9);
     }
 }
+
+/// HTTP `ChatClient` (feature `llm`) — the async-openai/reqwest implementation of the
+/// injected model client; see `agent::http` for provider quirks (DeepSeek/Ollama/
+/// OpenRouter) and the runtime confinement note (SPEC §2.1).
+#[cfg(feature = "llm")]
+pub mod http;

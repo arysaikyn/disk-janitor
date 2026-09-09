@@ -64,6 +64,15 @@ enum Cmd {
     },
     /// Recover from crashes: reconcile per-volume WALs against the filesystem (§5.2).
     Recover,
+    /// Live LLM agent run (feature `llm`): scan JSON → tool loop → proposal.
+    /// Build with `--features llm`; errors cleanly otherwise.
+    Agent {
+        /// Path to `janitor scan --json` output.
+        scan_json: std::path::PathBuf,
+        /// User intent sentence, e.g. 「腾出 25 GB」.
+        #[arg(long)]
+        prompt: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -91,6 +100,168 @@ fn main() -> anyhow::Result<()> {
         Cmd::Purge { manifest, bytes } => janitor_exec::run_purge(manifest, bytes),
         Cmd::Restore { op_id } => janitor_exec::run_restore(&op_id),
         Cmd::Recover => janitor_exec::run_recover(),
+        Cmd::Agent { scan_json, prompt } => janitor_agent::run_agent(&scan_json, &prompt),
+    }
+}
+
+pub mod janitor_agent {
+    /// `janitor agent <scan-json> --prompt …` (D-36): live LLM agent run over a scan.
+    /// Seeds `SessionCtx` from the scan JSON exactly like `run_plan`, drives the
+    /// sans-IO loop (next_step → complete/feed_reply → execute_tools) until Done,
+    /// then prints the trajectory, the proposal (plan id / awaiting-human-confirm),
+    /// and cumulative usage/cost from the budget state.
+    #[cfg(feature = "llm")]
+    pub fn run_agent(scan_json: &std::path::Path, prompt: &str) -> anyhow::Result<()> {
+        use disk_janitor::agent::http::HttpChatClient;
+        use disk_janitor::agent::{self, ChatClient, Role, RunState};
+
+        let raw = fs_err::read_to_string(scan_json)?;
+        let parsed: serde_json::Value = serde_json::from_str(&raw)?;
+        let candidates: Vec<disk_janitor::Candidate> =
+            serde_json::from_value(parsed["candidates"].clone())?;
+        let scan: disk_janitor::scan::ScanTotals = serde_json::from_value(parsed["scan"].clone())?;
+
+        let cfg = disk_janitor::config::load()?;
+        eprintln!("agent model: {} @ {}", cfg.model, cfg.endpoint);
+        let client = HttpChatClient::new(cfg.clone())?;
+
+        let home = disk_janitor::execute::home_ledger_dir();
+        let ledger = disk_janitor::ledger::open(&home)?;
+        let mut ctx = agent::SessionCtx {
+            candidates,
+            vols: scan.volumes,
+            ledger,
+            files_scanned: scan.files,
+            last_plan_id: None,
+            last_plan_bytes: None,
+        };
+        let mut run =
+            agent::AgentRun::new(prompt, &cfg.model, cfg.prices.clone(), cfg.budget.clone());
+
+        loop {
+            match run.next_step() {
+                RunState::CallModel { .. } => {
+                    let reply = client.complete(run.history(), &agent::tool_defs())?;
+                    run.feed_reply(reply);
+                }
+                RunState::CallTools { calls } => {
+                    run.execute_tools(&calls, &mut ctx);
+                }
+                RunState::Done { .. } => break,
+            }
+        }
+        run.finish(&mut ctx)?;
+
+        // --- trajectory ---------------------------------------------------------
+        println!("== trajectory (run {}) ==", run.run_id());
+        for (i, m) in run.history().iter().enumerate() {
+            if m.role == Role::Tool {
+                let tag = m
+                    .tool_call_id
+                    .as_deref()
+                    .map(|id| format!("({id})"))
+                    .unwrap_or_default();
+                println!("[{:>2}] tool{tag}: {}", i + 1, m.content);
+            } else {
+                println!("[{:>2}] {:?}: {}", i + 1, m.role, m.content);
+                for tc in &m.tool_calls {
+                    println!("        → {}: {}({})", tc.id, tc.name, tc.arguments);
+                }
+            }
+        }
+
+        // --- result --------------------------------------------------------------
+        let reason = match run.state() {
+            RunState::Done { reason } => *reason,
+            _ => unreachable!("loop exits only on Done"),
+        };
+        println!("== result ==");
+        println!("stop_reason: {reason:?}");
+        let mut proposal = None;
+        let mut verdict = None;
+        for m in run.history().iter().rev() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&m.content) else {
+                continue;
+            };
+            if m.role == Role::Tool {
+                if proposal.is_none() && v.get("plan_id").is_some() {
+                    proposal = Some(v);
+                } else if verdict.is_none() && v.get("verdict").is_some() {
+                    verdict = Some(v);
+                }
+            }
+            if proposal.is_some() && verdict.is_some() {
+                break;
+            }
+        }
+        match proposal {
+            Some(p) => println!(
+                "proposal: plan_id={} awaiting={}",
+                p["plan_id"],
+                p.get("awaiting").and_then(|a| a.as_str()).unwrap_or("n/a")
+            ),
+            None => {
+                let last = run
+                    .history()
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::Assistant && !m.content.is_empty());
+                match last {
+                    Some(m) => println!("proposal: (final text) {}", m.content),
+                    None => println!("proposal: (none — run ended without a plan)"),
+                }
+            }
+        }
+        if let Some(v) = verdict {
+            println!(
+                "verdict: {} reason={}",
+                v["verdict"],
+                v.get("reason").and_then(|r| r.as_str()).unwrap_or("")
+            );
+        }
+
+        // --- budget ---------------------------------------------------------------
+        let b = run.budget();
+        println!("== budget ==");
+        println!(
+            "turns: {} / {}",
+            b.turns,
+            if b.cap.max_turns == 0 {
+                "∞".to_string()
+            } else {
+                b.cap.max_turns.to_string()
+            }
+        );
+        println!(
+            "tokens: prompt {} + completion {} = {} / {}",
+            b.prompt_tokens,
+            b.completion_tokens,
+            b.tokens,
+            if b.cap.tokens == 0 {
+                "∞".to_string()
+            } else {
+                b.cap.tokens.to_string()
+            }
+        );
+        println!(
+            "cost_usd: {:.6} / {}",
+            b.cost_usd,
+            if b.cap.cost_usd == 0.0 {
+                "∞".to_string()
+            } else {
+                b.cap.cost_usd.to_string()
+            }
+        );
+        Ok(())
+    }
+
+    /// Clean error when the binary was built without the `llm` feature.
+    #[cfg(not(feature = "llm"))]
+    pub fn run_agent(_scan_json: &std::path::Path, _prompt: &str) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "`janitor agent` needs the `llm` feature (live model calls): \
+             build with `cargo build --features llm`"
+        )
     }
 }
 pub mod janitor_plan {

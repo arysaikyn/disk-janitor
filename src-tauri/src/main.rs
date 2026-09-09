@@ -8,6 +8,9 @@
 mod commands;
 
 fn main() {
+    // D-38: `--demo-data` puts every command in synthetic mode (P7 screen
+    // recordings). Read before `.run()` so the managed ScanState carries it.
+    let demo = std::env::args().any(|a| a == "--demo-data");
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             use tauri::Manager;
@@ -16,9 +19,10 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
-        .manage(commands::ScanState::default())
+        .manage(commands::ScanState { demo, ..Default::default() })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            commands::is_demo,
             commands::get_volumes,
             commands::start_scan,
             commands::cancel_scan,

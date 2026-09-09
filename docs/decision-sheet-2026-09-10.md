@@ -22,3 +22,15 @@
   followed the SPEC verbatim.
 
 *Every claim above traces to a commit: 9f4cb7c · 9fd33f1 · 17647bb · abda22c · c7de3aa · 248cd10 · a69a862 · 8934f5f · 95f2fbb · a54302d.*
+
+## Dispositions (owner answers, 2026-09-10 — all implemented same day)
+
+| # | Answer | Landed in |
+|---|---|---|
+| D-32 | **C** — PolicyDeny + TargetReached added to §6 Refusal enum; deny-globs emit PolicyDeny, target/max_entries caps emit TargetReached; plan tests updated | `src/lib.rs`, `src/plan.rs` |
+| D-33 | **A** — activity semantics confirmed (.git/HEAD mtime judges; machine-derived outputs exempt) | `src/plan.rs` (no change) |
+| D-34 | **A** — same-volume writable-ancestor fallback confirmed | `src/execute.rs` (no change) |
+| D-35 | **A** — writability probe confirmed | `src/scan/platform/macos.rs` (no change) |
+| D-36 | **B** — HTTP ChatClient landed behind `llm` feature: async-openai 0.41.3 non-streaming, async-openai's built-in retry layer (429/5xx + Retry-After), Ollama id-less → synthetic ids, `janitor agent` subcommand wired; 8 stub-server tests | `src/agent/http.rs`, `src/main.rs` |
+| D-37 | **C** — dua-core bumped `=3.3.0` → `=4.0.0` (Options.skip_metadata + Entry.metadata: Option<_> adapted; SPEC §5 risk row amended); 91 tests green | `Cargo.toml`, `src/scan/platform/macos.rs` |
+| D-38 | **C** — `--demo-data` Tauri switch: all 10 commands serve ipc.ts-mirrored synthetic payloads; ipc.ts probes `is_demo` once and routes to the same deterministic fallback | `src-tauri/src/{main,commands}.rs`, `app/src/lib/ipc.ts` |

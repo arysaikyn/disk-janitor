@@ -9,10 +9,14 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri::ipc::Channel;
 
-/// Shared scan session state (cancel flag + last result path).
+/// Shared scan session state (cancel flag + last result path + demo mode).
 pub struct ScanState {
     pub cancel: AtomicBool,
     pub last_scan: Mutex<Option<PathBuf>>,
+    /// D-38: `--demo-data` launch — every command returns the synthetic payloads
+    /// from `mod demo` (mirroring app/src/lib/ipc.ts) so screen recordings are
+    /// reproducible (P7). Set once in main.rs before `.run()`.
+    pub demo: bool,
 }
 
 impl Default for ScanState {
@@ -20,8 +24,17 @@ impl Default for ScanState {
         Self {
             cancel: AtomicBool::new(false),
             last_scan: Mutex::new(None),
+            demo: false,
         }
     }
+}
+
+/// D-38: demo-mode probe. The webview asks once at startup; when true it routes
+/// every command through the local demo fallbacks (app/src/lib/ipc.ts) instead
+/// of the real IPC.
+#[tauri::command]
+pub fn is_demo(state: State<'_, ScanState>) -> bool {
+    state.demo
 }
 
 /// Scan progress delta — typed channel payload (SPEC §3.3: ≥100 ms throttle).
@@ -69,7 +82,10 @@ pub struct VolumeDto {
 }
 
 #[tauri::command]
-pub fn get_volumes() -> Vec<VolumeDto> {
+pub fn get_volumes(state: State<'_, ScanState>) -> Vec<VolumeDto> {
+    if state.demo {
+        return demo::volumes();
+    }
     disk_janitor::scan::volumes()
         .into_iter()
         .map(|v| VolumeDto {
@@ -92,6 +108,10 @@ pub fn start_scan(
     channel: Channel<ScanProgress>,
     state: State<'_, ScanState>,
 ) -> Result<String, String> {
+    if state.demo {
+        demo::stream_scan(&channel);
+        return Ok("/Users/me/.disk-janitor/last-scan.json".to_string());
+    }
     state.cancel.store(false, Ordering::SeqCst);
     let user_home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let roots: Vec<PathBuf> = roots
@@ -218,6 +238,9 @@ pub fn cancel_scan(state: State<'_, ScanState>) {
 /// Reopen the last scan result without rescanning (SPEC §2.3 persistence row).
 #[tauri::command]
 pub fn get_last_scan(state: State<'_, ScanState>) -> Result<Option<serde_json::Value>, String> {
+    if state.demo {
+        return Ok(Some(demo::last_scan()));
+    }
     let p = state
         .last_scan
         .lock()
@@ -239,7 +262,11 @@ pub fn build_plan(
     scan_json_path: String,
     policy: Option<String>,
     min_bytes: Option<u64>,
+    state: State<'_, ScanState>,
 ) -> Result<serde_json::Value, String> {
+    if state.demo {
+        return Ok(demo::plan());
+    }
     let raw = std::fs::read(&scan_json_path).map_err(|e| e.to_string())?;
     let parsed: serde_json::Value = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
     let candidates: Vec<disk_janitor::Candidate> =
@@ -322,7 +349,12 @@ fn writable_vols() -> Vec<disk_janitor::VolumeInfo> {
 pub fn apply_plan(
     plan_id: String,
     channel: Channel<ExecProgress>,
+    state: State<'_, ScanState>,
 ) -> Result<serde_json::Value, String> {
+    if state.demo {
+        demo::stream_applied(&channel);
+        return Ok(demo::apply_report());
+    }
     let home = disk_janitor::execute::home_ledger_dir();
     let ledger = disk_janitor::ledger::open(&home).map_err(|e| e.to_string())?;
     let plan = find_plan(&plan_id)?;
@@ -354,7 +386,13 @@ pub fn purge_plan(
     plan_id: String,
     typed_bytes: u64,
     channel: Channel<ExecProgress>,
+    state: State<'_, ScanState>,
 ) -> Result<serde_json::Value, String> {
+    if state.demo {
+        // ipc.ts mirrors this with a 700 ms delay so the 销毁中… state is visible.
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        return Ok(demo::purge_report(typed_bytes));
+    }
     let home = disk_janitor::execute::home_ledger_dir();
     let ledger = disk_janitor::ledger::open(&home).map_err(|e| e.to_string())?;
     let plan = find_plan(&plan_id)?;
@@ -378,7 +416,11 @@ pub fn purge_plan(
 pub fn restore_op(
     op_id: String,
     channel: Channel<ExecProgress>,
+    state: State<'_, ScanState>,
 ) -> Result<serde_json::Value, String> {
+    if state.demo {
+        return Ok(demo::restore_report());
+    }
     let home = disk_janitor::execute::home_ledger_dir();
     let ledger = disk_janitor::ledger::open(&home).map_err(|e| e.to_string())?;
     let vols = writable_vols();
@@ -396,7 +438,13 @@ pub fn restore_op(
 
 /// Ledger tail for the 台账 screen (R5).
 #[tauri::command]
-pub fn get_ledger_tail(limit: Option<usize>) -> Result<Vec<serde_json::Value>, String> {
+pub fn get_ledger_tail(
+    limit: Option<usize>,
+    state: State<'_, ScanState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    if state.demo {
+        return Ok(Vec::new());
+    }
     let home = disk_janitor::execute::home_ledger_dir();
     let path = home.join("ledger.jsonl");
     if !path.exists() {
@@ -415,7 +463,10 @@ pub fn get_ledger_tail(limit: Option<usize>) -> Result<Vec<serde_json::Value>, S
 
 /// Startup recovery (§5.2): reconcile WALs, surface dangling intents + expired grace.
 #[tauri::command]
-pub fn recover_on_launch() -> Result<serde_json::Value, String> {
+pub fn recover_on_launch(state: State<'_, ScanState>) -> Result<serde_json::Value, String> {
+    if state.demo {
+        return Ok(demo::recovery());
+    }
     let vols = writable_vols();
     let rr = disk_janitor::execute::recover(&vols);
     Ok(serde_json::json!({
@@ -458,4 +509,233 @@ fn find_plan(plan_id: &str) -> Result<disk_janitor::plan::Plan, String> {
             .1
     };
     disk_janitor::plan::load_manifest(&path).map_err(|e| e.to_string())
+}
+
+// ── D-38: --demo-data synthetic payloads (P7 reproducible screen recordings) ──
+//
+// Every builder mirrors the browser fallback constants in app/src/lib/ipc.ts
+// (DEMO_CANDIDATES + the `demo()` switch) — same ids, same numbers, same shapes,
+// no invented values. Keep the two in sync when either changes.
+
+mod demo {
+    use super::{ExecProgress, ScanProgress, VolumeDto};
+    use serde_json::{json, Value};
+    use tauri::ipc::Channel;
+
+    /// DEMO_CANDIDATES from ipc.ts (manifest shape: path/alloc_bytes).
+    pub fn candidates() -> Vec<Value> {
+        vec![
+            json!({
+                "id": "c1",
+                "path": "~/code/api/node_modules",
+                "path_hash": "h1",
+                "alloc_bytes": 2_100_000_000u64,
+                "grade": "rebuildable_from_source",
+                "evidence": [
+                    { "kind": "LockfilePresent", "detail": "package-lock.json newer than dir", "strength": "Strong" },
+                    { "kind": "GitRepoAncestor", "detail": "HEAD 3 h ago", "strength": "Strong" },
+                    { "kind": "Unreadable", "detail": "", "strength": "Weak" },
+                ],
+            }),
+            json!({
+                "id": "c2",
+                "path": "~/Library/Developer/Xcode/DerivedData",
+                "path_hash": "h2",
+                "alloc_bytes": 6_800_000_000u64,
+                "grade": "rebuildable_from_source",
+                "evidence": [
+                    { "kind": "LockfilePresent", "detail": "xcuserdata lockfile present", "strength": "Strong" },
+                    { "kind": "BuildArtifactShape", "detail": "9 d 2 h since build", "strength": "Medium" },
+                ],
+            }),
+            json!({
+                "id": "c3",
+                "path": "~/.npm/_cacache",
+                "path_hash": "h3",
+                "alloc_bytes": 3_200_000_000u64,
+                "grade": "pure_cache",
+                "evidence": [
+                    { "kind": "CasStore", "detail": "content-addressed store, self-healing", "strength": "Strong" },
+                ],
+            }),
+            json!({
+                "id": "c4",
+                "path": "~/Downloads/old-installers",
+                "path_hash": "h4",
+                "alloc_bytes": 1_500_000_000u64,
+                "grade": "redownloadable",
+                "evidence": [
+                    { "kind": "SiblingManifestMissing", "detail": "vendor installers, dmg/pkg", "strength": "Medium" },
+                ],
+            }),
+            json!({
+                "id": "c5",
+                "path": "~/code/legacy/vendor",
+                "path_hash": "h5",
+                "alloc_bytes": 4_900_000_000u64,
+                "grade": "expensive",
+                "evidence": [
+                    { "kind": "OrphanTree", "detail": "no manifest in ancestors", "strength": "Medium" },
+                ],
+            }),
+            json!({
+                "id": "c6",
+                "path": "~/code/api/node_modules/.cache",
+                "path_hash": "h6",
+                "alloc_bytes": 400_000_000u64,
+                "grade": "hands_off",
+                "evidence": [
+                    { "kind": "MtimeHot", "detail": "written 4 min ago", "strength": "Strong" },
+                ],
+            }),
+        ]
+    }
+
+    /// get_volumes demo — one writable APFS root (ipc.ts get_volumes case).
+    pub fn volumes() -> Vec<VolumeDto> {
+        vec![VolumeDto {
+            mount: "/".into(),
+            fs: "APFS".into(),
+            total: 1_000_000_000_000,
+            free_raw: 387_600_000_000,
+            read_only: false,
+            writable: true,
+        }]
+    }
+
+    /// get_last_scan demo envelope (ipc.ts get_last_scan case).
+    pub fn last_scan() -> Value {
+        json!({
+            "roots": ["/Users/me"],
+            "min_bytes": 52_428_800u64,
+            "candidates": candidates(),
+        })
+    }
+
+    /// build_plan demo plan (ipc.ts build_plan case; hands_off candidate excluded).
+    pub fn plan() -> Value {
+        let entries: Vec<Value> = candidates()
+            .into_iter()
+            .filter(|c| c.get("grade").and_then(Value::as_str) != Some("hands_off"))
+            .map(|c| {
+                json!({
+                    "cid": c["id"].clone(),
+                    "path": c["path"].clone(),
+                    "path_hash": c["path_hash"].clone(),
+                    "action": { "type": "quarantine" },
+                    "grade": c["grade"].clone(),
+                    "alloc_bytes": c["alloc_bytes"].clone(),
+                })
+            })
+            .collect();
+        json!({
+            "plan_id": "plan-demo-20260909",
+            "created_at": now_iso(),
+            "entries": entries,
+            "totals": {
+                "quarantine_bytes": 19_300_000_000u64,
+                "quarantine_entries": 11u64,
+                "prune_bytes": 1_600_000_000u64,
+                "prune_cmds": 2u64,
+                "refused": 3u64,
+                "snapshot_caveat": Value::Null,
+            },
+            "policy_snapshot": {},
+        })
+    }
+
+    /// apply_plan demo report (ipc.ts apply_plan case).
+    pub fn apply_report() -> Value {
+        json!({
+            "op_id": "op-demo",
+            "applied": 11u64,
+            "skipped": 0u64,
+            "refused": 3u64,
+            "quarantined_bytes": 19_300_000_000u64,
+        })
+    }
+
+    /// purge_plan demo report (ipc.ts purge_plan case) — freed bytes == typed bytes.
+    pub fn purge_report(typed_bytes: u64) -> Value {
+        json!({ "ok": true, "bytes_freed": typed_bytes })
+    }
+
+    /// restore_op demo report (ipc.ts restore_op case).
+    pub fn restore_report() -> Value {
+        json!({ "ok": true, "restored": 1u64 })
+    }
+
+    /// recover_on_launch demo report (ipc.ts recover_on_launch case).
+    pub fn recovery() -> Value {
+        json!({ "resumed": Value::Null, "dangling": 0u64, "expired": 0u64 })
+    }
+
+    /// start_scan demo: stream Files ticks + Finished over the channel (ipc.ts
+    /// start_scan case timings — ticks at 0/320/640/960/1280 ms, finished 240 ms
+    /// after the last) so the ring animates, then resolve with the demo path.
+    pub fn stream_scan(channel: &Channel<ScanProgress>) {
+        const TOTAL_FILES: u64 = 1_204_553;
+        const TOTAL_BYTES: u64 = 900_000_000_000;
+        const TICKS: [(f64, &str); 5] = [
+            (0.12, "~/code/api"),
+            (0.31, "~/Library/Developer"),
+            (0.55, "~/Library/Caches"),
+            (0.74, "~/.npm"),
+            (0.93, "~/Downloads"),
+        ];
+        for (i, (frac, path)) in TICKS.iter().enumerate() {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(320));
+            }
+            let _ = channel.send(ScanProgress::Files {
+                files: (TOTAL_FILES as f64 * frac).round() as u64,
+                bytes: (TOTAL_BYTES as f64 * frac).round() as u64,
+                rate_bps: 1_300_000_000.0,
+                current: (*path).into(),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(240));
+        let _ = channel.send(ScanProgress::Finished {
+            files: TOTAL_FILES,
+            bytes: TOTAL_BYTES,
+            elapsed_ms: 42_000,
+        });
+    }
+
+    /// apply_plan demo: stream an EntryApplied event per plan entry so the
+    /// Activity screen animates (D-38; ipc.ts carries no stream — Rust-side only).
+    pub fn stream_applied(channel: &Channel<ExecProgress>) {
+        for cid in ["c1", "c2", "c3", "c4", "c5"] {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let _ = channel.send(ExecProgress::Applied {
+                cid: cid.into(),
+                to: format!("/Users/me/.disk-janitor/quarantine/{cid}"),
+            });
+        }
+    }
+
+    /// RFC3339 UTC timestamp with millis — same shape as `new Date().toISOString()`
+    /// and chrono's serde output; std-only (chrono is not a dep of this crate and
+    /// D-38 forbids new deps).
+    fn now_iso() -> String {
+        let d = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let days = d.as_secs() / 86_400;
+        let rem = d.as_secs() % 86_400;
+        let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+        // Civil-from-days (Hinnant): days since epoch → y/m/d in the proleptic
+        // Gregorian calendar.
+        let z = days as i64 + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let dd = doy - (153 * mp + 2) / 5 + 1;
+        let mm = if mp < 10 { mp + 3 } else { mp - 9 };
+        let yy = if mm <= 2 { y + 1 } else { y };
+        format!("{yy:04}-{mm:02}-{dd:02}T{h:02}:{m:02}:{s:02}.{:03}Z", d.subsec_millis())
+    }
 }

@@ -2147,7 +2147,7 @@ llm = ["dep:tokio", "dep:reqwest", "dep:async-openai", "dep:tiktoken-rs", "dep:b
 
 | Dependency | Risk | Mitigation |
 |---|---|---|
-| dua-core 3.3.0 | 10-day-old standalone crate (2026-08-28, ~10k downloads) — most likely to churn before 2026-09-08 | Pin exact `=3.3.0` [04]; watch crates.io for 3.3.1+; audit macOS unsafe code; fallback = ignore::WalkParallel + own channel + `std::thread::available_parallelism()` [04] |
+| dua-core 3.3.0 | 10-day-old standalone crate (2026-08-28, ~10k downloads) — most likely to churn before 2026-09-08 | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; 91 tests green incl. walker/syscall suites. Fallback = ignore::WalkParallel unchanged. Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
 | ratatui 0.30.2 / crossterm 0.29 | crossterm 0.30 does not exist yet as a known target; when a new major lands, ratatui moves (non-optional dep) and every direct crossterm use must move in the same commit (separate event queues per major = race/lost-event risk) | Pin `crossterm = "0.29"` next to `ratatui = "0.30"`; check transitive deps in CI [06] |
 | reqwest 0.13.x | 0.13.0 broke with rustls-default (crypto provider aws-lc-rs); `query`/`form` became opt-in; `json` default-on "verify at build time" | Pin `0.13.4`; enable `json` explicitly; test base-URL overrides (DeepSeek/OpenRouter/Ollama/vLLM) at build time [07] |
 | async-openai 0.41.3 | fine-grained feature churn (`chat-completion`, `middleware`, `byot`); 0.41.3 released 2026-07-31 | Pin exact; compile only chat-completions [07] |

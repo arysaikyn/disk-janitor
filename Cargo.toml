@@ -13,8 +13,7 @@ name = "fixture-gen"
 path = "src/bin/fixture-gen.rs"
 
 [dependencies]
-# --- core (SPEC Part D §3, pins verified 2026-08-30/31) ---
-dua-core = "=3.3.0"                                 # [04] pin exact; macOS getattrlistbulk walker
+dua-core = "=4.0.0"                                # [04] bumped 3.3.0→4.0.0 per owner D-37 (2026-09-10); API probe required
 ignore = "0.4.33"                                   # [04] fallback walker + GitignoreBuilder
 globset = "0.4.20"                                  # [04] policy/ignore glob matching
 walkdir = "2.5.0"                                   # [04] serial fallback traversal
@@ -40,6 +39,16 @@ cargo_metadata = "0.23.1"                           # [SPEC §3.2] rust workspac
 dirs = "6.0.0"                                      # ledger/config home resolution
 secrecy = "0.10"                                    # API-key type (M4 config)
 same-file = "1.0.6"                                 # volume identity checks (M2)
+
+# --- LLM agent loop (feature "llm", D-36) — SPEC Part D §4 pins ---
+tokio = { version = "1.53.1", optional = true, features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = { version = "0.13.4", optional = true, default-features = true, features = ["json"] }
+async-openai = { version = "0.41.3", optional = true, features = ["chat-completion"] }
+tiktoken-rs = { version = "0.12.0", optional = true }
+backon = { version = "1.6.0", optional = true }
+
+[features]
+llm = ["dep:tokio", "dep:reqwest", "dep:async-openai", "dep:tiktoken-rs", "dep:backon"]
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1.6.1"                                     # [05][11] com.apple.quarantine probe
