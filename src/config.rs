@@ -88,10 +88,10 @@ pub fn load() -> Result<Config, ConfigError> {
     if let Ok(m) = std::env::var("DISK_JANITOR_MODEL") {
         cfg.model = m;
     }
-    if let Ok(b) = std::env::var("DISK_JANITOR_BUDGET_USD") {
-        if let Ok(v) = b.parse() {
-            cfg.budget.cost_usd = v;
-        }
+    if let Ok(b) = std::env::var("DISK_JANITOR_BUDGET_USD")
+        && let Ok(v) = b.parse()
+    {
+        cfg.budget.cost_usd = v;
     }
     Ok(cfg)
 }

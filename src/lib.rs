@@ -5,8 +5,10 @@
 //! the cross-subagent interface. Field lists follow SPEC §6 verbatim; additions are
 //! forbidden without an SPEC/ADR sync.
 
+pub mod agent;
 pub mod classify;
 pub mod config;
+pub mod cost;
 pub mod execute;
 pub mod ledger;
 pub mod plan;
