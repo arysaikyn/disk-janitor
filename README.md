@@ -28,7 +28,7 @@ remove*. Every existing tool stops at byte locations or black-box verdicts. Disk
 
 ## What works today (M1–M4)
 
-- **`janitor scan --json` CLI** — dua-core 3.3.0 macOS walker, deterministic
+- **`janitor scan --json` CLI** — dua-core 4.0.0 macOS walker, deterministic
   candidate ids, evidence engine, rebuild-cost grades [9f4cb7c].
 - **plan / apply / purge / restore** — `renamex_np` on-volume quarantine (atomic,
   no-clobber), crc32-framed JSONL WAL + `flock`, append-only ledger; **kill -9 at
@@ -47,11 +47,26 @@ remove*. Every existing tool stops at byte locations or black-box verdicts. Disk
 ## Quickstart
 
 ```bash
-cargo build                             # Rust core: scan/classify/plan/execute/ledger/agent/config
-./target/debug/janitor scan --help      # CLI: scan/plan/apply/purge/restore (+ --json)
-cd app && bun install && bun run dev    # Svelte 5 frontend (Vite dev server, port 1420)
-cd src-tauri && cargo run               # Tauri shell (expects the dev server above)
+# 1. Build everything (Rust core + CLI)
+cargo build
+
+# 2. CLI flow — scan your home dir, review what's reclaimable
+./target/debug/janitor scan --json > /tmp/scan.json        # candidates as JSON
+./target/debug/janitor plan /tmp/scan.json --policy "腾出 25 GB" --min-bytes 104857600
+./target/debug/janitor apply plan-*.json                   # zero bytes freed, reversible
+./target/debug/janitor restore <op-id>                     # one command undo (within 72 h)
+./target/debug/janitor purge plan-*.json --bytes <EXACT>   # irreversible — type the byte count
+
+# 3. GUI (Tauri + Svelte) — needs Bun and a vite dev server
+cd app && bun install && bun run dev        # frontend on :1420
+cd ../src-tauri && cargo run                # app window; add --demo-data for synthetic data
+
+# 4. AI agent (needs an API key; D-22: demo runs without one)
+DISK_JANITOR_API_KEY=sk-... cargo run --features llm --bin janitor -- agent /tmp/scan.json --prompt "腾出 25 GB"
 ```
+
+Crash safety: `kill -9` the app anywhere between scan and purge — next launch
+`janitor recover` reconciles the WAL (apply auto-resumes; purge runs to completion).
 
 ## Test / gate commands
 
