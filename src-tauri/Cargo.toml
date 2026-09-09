@@ -1,0 +1,22 @@
+[package]
+name = "disk-janitor-gui"
+version = "0.1.0"
+edition = "2024"
+description = "还我磁盘 Giveback — Tauri shell over the disk_janitor core (SPEC Part C, ADR-5/18)"
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+disk_janitor = { path = ".." }
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-dialog = "=2.7.3"
+tauri-plugin-opener = "=2.5.5"
+tauri-plugin-single-instance = "=2.4.4"
+tauri-plugin-window-state = "=2.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+crossbeam-channel = "0.5.16"
+uuid = { version = "1.26.0", features = ["v4"] }
+dirs = "6.0.0"
+

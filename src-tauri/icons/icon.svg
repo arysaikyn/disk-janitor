@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 还我磁盘 Giveback app icon — the undo moment is the logo (note 20 direction B, D-23).
+       Rounded-square macOS-style tile; calm dark navy (#0d1117) with a teal→blue
+       restore-arrow arc returning a byte counter; no broom, no dust — restore, not scrub. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#141a23"/>
+      <stop offset="1" stop-color="#0a0e14"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#40c8b0"/>
+      <stop offset="1" stop-color="#0a84ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <!-- restore arc: the arrow sweeping back (undo gesture) -->
+  <path d="M 300 512 A 212 212 0 1 1 520 724" fill="none" stroke="url(#arc)" stroke-width="88" stroke-linecap="round"/>
+  <!-- arrowhead of the undo -->
+  <path d="M 460 640 L 520 724 L 430 748 Z" fill="url(#arc)"/>
+  <!-- byte counter: three rounded bars reading like a numeric readout being given back -->
+  <rect x="560" y="470" width="130" height="84" rx="20" fill="#e7ecf2"/>
+  <rect x="560" y="584" width="200" height="84" rx="20" fill="#e7ecf2" opacity="0.55"/>
+  <rect x="560" y="698" width="90" height="84" rx="20" fill="#e7ecf2" opacity="0.3"/>
+</svg>
