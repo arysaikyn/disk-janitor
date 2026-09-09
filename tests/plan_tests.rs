@@ -194,6 +194,11 @@ fn totals_dedup_hardlinked_inodes() {
     assert_eq!(plan.totals.quarantine_entries, 3);
     assert_eq!(plan.totals.quarantine_bytes, 2 * 100 * MIB); // 1 + 1 distinct inodes
     assert_eq!(plan.totals.refused, 0);
+    // B1: entries carry the (dev,ino) dedup key so purge() can recompute the
+    // SAME deduped total from the manifest alone.
+    assert_eq!(plan.entries[0].inode, Some((1, 7)));
+    assert_eq!(plan.entries[1].inode, Some((1, 7)));
+    assert_eq!(plan.entries[2].inode, Some((1, 8)));
 }
 
 // --- §3.3 target_bytes greedy (whole entries only) --------------------------------
@@ -569,4 +574,74 @@ fn policy_two_bie_dong_clauses_both_rules_fire() {
     assert_eq!(c.constraints.deny_globs.len(), 1);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
     assert!(c.applied_rules.contains(&policy::RULE_DENY_GLOBS));
+}
+
+/// (D1) Space-glued clause (no punctuation): the target span is consumed by Rule 1,
+/// yet Rule 3 still protects the tail — target_bytes AND deny_globs both fire.
+#[test]
+fn policy_space_glued_clause_target_and_deny_globs_both_fire() {
+    let c = policy::compile("腾出 25 GB 别动 Xcode 归档");
+    assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
+    let home = dirs::home_dir().expect("home dir");
+    let want = home
+        .join("Library/Developer/Xcode/Archives")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(c.constraints.deny_globs, vec![want]);
+    assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
+    assert!(c.applied_rules.contains(&policy::RULE_DENY_GLOBS));
+    assert!(c.unmatched.is_empty(), "no residue: {:?}", c.unmatched);
+}
+
+/// (D1) Space-glued MTA clause: Rule 2 fires before Rule 3, so the fragment is not
+/// double-read as a glob.
+#[test]
+fn policy_space_glued_mta_clause_not_double_read() {
+    let c = policy::compile("腾出 25 GB 别动最近的项目");
+    assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
+    assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
+    assert!(
+        c.constraints.deny_globs.is_empty(),
+        "no glob from an MTA fragment"
+    );
+    assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
+    assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
+    assert!(c.unmatched.is_empty(), "no residue: {:?}", c.unmatched);
+}
+
+/// (D2) Unrecognized fragments — decimals, Chinese numerals — land verbatim in
+/// `unmatched` instead of silently becoming default constraints.
+#[test]
+fn policy_unmatched_reports_unrecognized_fragment() {
+    let c = policy::compile("腾出 25.5 GB");
+    assert!(c.applied_rules.is_empty());
+    assert_default_constraints(&c.constraints);
+    assert_eq!(c.unmatched, vec!["腾出 25.5 GB"]);
+
+    let c2 = policy::compile("腾出 五十 GB");
+    assert!(c2.applied_rules.is_empty());
+    assert_eq!(c2.unmatched, vec!["腾出 五十 GB"]);
+}
+
+/// (D3) 「这两周」 alone is a description, not a protection: no MTA rule without
+/// the protective verb 别动; the fragment stays unmatched.
+#[test]
+fn policy_two_weeks_alone_no_mta_rule() {
+    let c = policy::compile("腾出 25 GB，这两周");
+    assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
+    assert_eq!(c.constraints.deny_under_mta_secs, 0);
+    assert!(!c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
+    assert_eq!(c.unmatched, vec!["这两周"]);
+}
+
+/// (D3 positive) 别动最近… carries the protective verb → MTA fires.
+#[test]
+fn policy_bie_dong_zui_jin_fires_mta() {
+    let c = policy::compile("别动最近的项目");
+    assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
+    assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
+    assert!(
+        c.constraints.deny_globs.is_empty(),
+        "MTA fragment must not become a glob"
+    );
 }

@@ -21,13 +21,17 @@ const GIB: u64 = 1024 * 1024 * 1024;
 /// Ordered first-match rules:
 ///
 /// 1. 「腾出 25GB」 / "free up 50 GB" → `target_bytes` (first match wins).
-/// 2. 别动…两周 / 别动最近 (clause-level, checked before the generic 别动 rule) →
-///    `deny_under_mta_secs = 14 d`.
+/// 2. 别动…两周 / 别动最近 (fragment-level, checked before the generic 别动 rule; the
+///    protective verb 别动 is required — 「这两周」 alone is a description, not a
+///    protection) → `deny_under_mta_secs = 14 d`.
 /// 3. 别动 <target> (「别动 Xcode 归档」 expands to `~/Library/Developer/Xcode/Archives`;
-///    otherwise the clause tail, `~/` expanded) → `deny_globs +=` entry.
+///    otherwise the fragment tail, `~/` expanded) → `deny_globs +=` entry.
 ///
-/// Text no rule consumed lands in `unmatched`; when nothing matches, `constraints`
-/// stays at defaults and `applied_rules` is empty.
+/// Rules 2/3 scan residual *fragments* — clause spans minus spans already consumed —
+/// not just clause starts, so a space-glued 「腾出 25 GB 别动 Xcode 归档」 (target span
+/// consumed, no punctuation) still protects its tail. Text no rule consumed lands in
+/// `unmatched`; when nothing matches, `constraints` stays at defaults and
+/// `applied_rules` is empty.
 pub fn compile(sentence: &str) -> CompiledPolicy {
     let mut constraints = PolicyConstraintsShape::default();
     let mut applied_rules: Vec<&'static str> = Vec::new();
@@ -40,38 +44,41 @@ pub fn compile(sentence: &str) -> CompiledPolicy {
         consumed.push((start, end));
     }
 
-    // Rule 2 (before Rule 3 so a 别动…两周 clause is not also read as a glob):
-    // clause-level deny_under_mta.
-    for clause in split_clauses(sentence) {
-        if clause_is_mta(clause.text) {
-            constraints.deny_under_mta_secs = TWO_WEEKS_SECS;
-            applied_rules.push(RULE_DENY_UNDER_MTA);
-            consumed.push((clause.start, clause.end));
+    let clauses = split_clauses(sentence);
+
+    // Rule 2 (before Rule 3 so a 别动…两周 fragment is not also read as a glob):
+    // deny_under_mta on residual fragments (clause spans minus spans already
+    // consumed by Rule 1). Requires the protective verb 别动.
+    for clause in &clauses {
+        for (gs, ge) in clause_gaps(clause, &consumed) {
+            if fragment_is_mta(&sentence[gs..ge]) {
+                constraints.deny_under_mta_secs = TWO_WEEKS_SECS;
+                applied_rules.push(RULE_DENY_UNDER_MTA);
+                consumed.push((gs, ge));
+            }
         }
     }
 
-    // Rule 3: 别动 <target> → deny_globs (clauses not already consumed by Rule 2).
-    for clause in split_clauses(sentence) {
-        let trimmed = clause.text.trim();
-        if !trimmed.starts_with("别动") {
-            continue;
+    // Rule 3: 别动 <target> → deny_globs. Scans residual fragments, not just clause
+    // starts, so a space-glued 「腾出 25 GB 别动 Xcode 归档」 — target span consumed,
+    // no punctuation — still protects its tail.
+    for clause in &clauses {
+        for (gs, ge) in clause_gaps(clause, &consumed) {
+            let gap = &sentence[gs..ge];
+            let Some(i) = gap.find("别动") else {
+                continue;
+            };
+            let tail = gap[i + "别动".len()..].trim_start_matches([' ', '\u{3000}', '\t']);
+            if tail.is_empty() {
+                continue;
+            }
+            let glob = glob_for_tail(tail);
+            if !constraints.deny_globs.contains(&glob) {
+                constraints.deny_globs.push(glob);
+                applied_rules.push(RULE_DENY_GLOBS);
+            }
+            consumed.push((gs, ge));
         }
-        if consumed
-            .iter()
-            .any(|&(s, e)| s == clause.start && e == clause.end)
-        {
-            continue;
-        }
-        let tail = trimmed["别动".len()..].trim_start_matches([' ', '\u{3000}', '\t']);
-        if tail.is_empty() {
-            continue;
-        }
-        let glob = glob_for_tail(tail);
-        if !constraints.deny_globs.contains(&glob) {
-            constraints.deny_globs.push(glob);
-            applied_rules.push(RULE_DENY_GLOBS);
-        }
-        consumed.push((clause.start, clause.end));
     }
 
     CompiledPolicy {
@@ -90,40 +97,34 @@ pub struct CompiledPolicy {
     pub unmatched: Vec<String>,
 }
 
-struct Clause<'a> {
+struct Clause {
     start: usize,
     end: usize,
-    text: &'a str,
 }
 
 /// Split on CJK/ASCII clause delimiters; byte ranges are safe because delimiters are
 /// single chars from `char_indices`.
-fn split_clauses(s: &str) -> Vec<Clause<'_>> {
+fn split_clauses(s: &str) -> Vec<Clause> {
     let mut out = Vec::new();
     let mut start = 0usize;
     for (i, ch) in s.char_indices() {
         if matches!(ch, '，' | '。' | '；' | ';' | ',' | '、' | '\n') {
-            out.push(Clause {
-                start,
-                end: i,
-                text: &s[start..i],
-            });
+            out.push(Clause { start, end: i });
             start = i + ch.len_utf8();
         }
     }
     out.push(Clause {
         start,
         end: s.len(),
-        text: &s[start..],
     });
     out
 }
 
-fn clause_is_mta(t: &str) -> bool {
-    t.contains("这两周")
-        || t.contains("近两周")
-        || t.contains("别动最近")
-        || (t.contains("别动") && t.contains("最近"))
+/// MTA protection requires the protective verb: 别动 plus a recent-time marker
+/// (这两周 / 近两周 / 最近 — 别动最近 covers the last case). 「这两周」 alone is a
+/// description, not a protection (D3).
+fn fragment_is_mta(t: &str) -> bool {
+    t.contains("别动") && (t.contains("这两周") || t.contains("近两周") || t.contains("最近"))
 }
 
 /// 「腾出|free up」 + spaces + digits + spaces + GB/G (case-insensitive) → bytes.
@@ -213,17 +214,49 @@ fn glob_for_tail(tail: &str) -> String {
     }
 }
 
-/// Clauses whose byte range does not overlap any consumed rule span.
+/// Residual fragments of `clause` not covered by any consumed rule span (consumed
+/// spans are clamped to the clause range and merged). These gaps — not whole
+/// clauses — are the units Rules 2/3 and `unmatched` operate on, so a rule that
+/// consumes a span inside a clause (e.g. 腾出 25 GB) never hides the rest of the
+/// clause from later rules.
+fn clause_gaps(clause: &Clause, consumed: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut covered: Vec<(usize, usize)> = consumed
+        .iter()
+        .filter(|&&(s, e)| s < clause.end && clause.start < e)
+        .map(|&(s, e)| (s.max(clause.start), e.min(clause.end)))
+        .collect();
+    covered.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in covered {
+        match merged.last_mut() {
+            Some((_, le)) if s <= *le => *le = (*le).max(e),
+            _ => merged.push((s, e)),
+        }
+    }
+    let mut out = Vec::new();
+    let mut start = clause.start;
+    for (s, e) in merged {
+        if s > start {
+            out.push((start, s));
+        }
+        start = start.max(e);
+    }
+    if start < clause.end {
+        out.push((start, clause.end));
+    }
+    out
+}
+
+/// Text no rule consumed, one entry per residual fragment (trimmed, empty skipped).
 fn unmatched_parts(s: &str, consumed: &[(usize, usize)]) -> Vec<String> {
-    split_clauses(s)
-        .into_iter()
-        .filter_map(|cl| {
-            let text = cl.text.trim();
-            if text.is_empty() {
-                return None;
+    let mut out = Vec::new();
+    for clause in split_clauses(s) {
+        for (gs, ge) in clause_gaps(&clause, consumed) {
+            let text = s[gs..ge].trim();
+            if !text.is_empty() {
+                out.push(text.to_string());
             }
-            let overlapped = consumed.iter().any(|&(s, e)| cl.start < e && s < cl.end);
-            (!overlapped).then(|| text.to_string())
-        })
-        .collect()
+        }
+    }
+    out
 }
