@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from "svelte";
   import { t, getLocale, onLocaleChange } from "../lib/i18n";
   import { invoke, channel } from "../lib/ipc";
+  import EmptyState from "../lib/EmptyState.svelte";
+  import PressButton from "../lib/PressButton.svelte";
 
   // Single-language mode (D-31): mirror the active locale so {#key locale}
   // re-renders this screen's strings when the titlebar switcher flips languages.
@@ -200,6 +202,7 @@
 
   function fmtBytes(n: number): string {
     if (!Number.isFinite(n) || n < 0) return "—";
+    if (n === 0) return "0 GB";
     if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
     if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
     return `${(n / 1e3).toFixed(1)} KB`;
@@ -235,9 +238,7 @@
       </div>
     </div>
   {:else if !loading && recs.length === 0}
-    <div class="empty">
-      <div class="big">{t("ledger.empty")}</div>
-    </div>
+    <EmptyState title={t("ledger.empty")} hint={t("ledger.empty_hint")} />
   {:else}
     {#if restoreErr}
       <div class="refusal">
@@ -276,14 +277,16 @@
                   <span class="grace num">
                     {t("ledger.remaining")} {rem.h}h {rem.m}m
                   </span>
-                  <button
+                  <PressButton
+                    kind="ghost"
+                    label={t("ledger.restore")}
                     disabled={restoring !== null && restoring === opIdOf(rec.quarantine_path)}
-                    onclick={() => restore(row)}
-                  >
-                    {t("ledger.restore")}
-                  </button>
+                    onpress={() => restore(row)}
+                  />
                 {:else if state === "expired"}
-                  <span class="l-state warn num">{t("ledger.pending")}</span>
+                  <span class="l-state warn num">
+                    <span class="adot" aria-hidden="true"></span>{t("ledger.pending")}
+                  </span>
                 {:else if state === "destroyed"}
                   <span class="l-state dead num">{t("ledger.not_restorable")}</span>
                 {:else}
@@ -377,7 +380,7 @@
   }
   .sub {
     font-size: 12px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
 
   .ledger {
@@ -404,21 +407,21 @@
   }
   .group-head .n {
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--mist);
     font-weight: 400;
   }
 
   .ledger-list {
     border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: var(--bg-raised);
+    border-radius: var(--r-sm);
+    background: var(--surface);
     overflow: hidden;
   }
   .ledger-row {
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 10px 16px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--hairline);
     font-size: 13px;
   }
@@ -429,14 +432,14 @@
     opacity: 0.55;
   }
   .l-id {
-    color: var(--text-faint);
+    color: var(--mist);
     font-size: 11px;
     flex-shrink: 0;
     width: 48px;
   }
   .l-kind {
     font-size: 10px;
-    color: var(--text-dim);
+    color: var(--mist);
     flex-shrink: 0;
     width: 52px;
   }
@@ -470,13 +473,14 @@
   }
   .l-p2 {
     font-size: 10px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
   .grace {
     font-size: 11px;
     color: var(--grade-expensive);
     flex-shrink: 0;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
   .l-state {
     font-size: 11px;
@@ -487,26 +491,26 @@
     color: var(--grade-pure);
   }
   .l-state.warn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     color: var(--grade-expensive);
   }
+  .l-state.warn .adot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--grade-expensive);
+    opacity: 0.55;
+    flex-shrink: 0;
+  }
   .l-state.dead {
-    color: var(--text-faint);
+    color: var(--mist);
   }
   .cost {
     font-size: 11px;
     color: var(--grade-expensive);
     flex-shrink: 0;
-  }
-
-  .empty {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text-dim);
-  }
-  .empty .big {
-    font-size: 14px;
-    color: var(--text);
-    font-weight: 600;
   }
 
   /* P1 refusal banner */
@@ -516,9 +520,9 @@
     align-items: flex-start;
     border: 1px solid var(--hairline);
     border-left: 2px solid var(--grade-hands);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 12px 14px;
-    background: var(--bg-raised);
+    background: var(--surface);
     font-size: 12px;
   }
   .rdot {
@@ -534,7 +538,7 @@
     margin-bottom: 2px;
   }
   .rt-body {
-    color: var(--text-dim);
+    color: var(--mist);
     margin-bottom: 4px;
     word-break: break-all;
   }

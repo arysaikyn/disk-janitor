@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { t, getLocale, onLocaleChange } from "../lib/i18n";
   import { invoke, channel } from "../lib/ipc";
+  import Orb from "../lib/Orb.svelte";
+  import MetricLine from "../lib/MetricLine.svelte";
+  import PressButton from "../lib/PressButton.svelte";
 
   interface Props {
     ondone: (scanPath: string) => void;
@@ -25,8 +28,9 @@
     | { t: "root_error"; root: string; err: string }
     | { t: "finished"; files: number; bytes: number; elapsed_ms: number };
 
-  let pct = $state(0);
-  let indeterminate = $state(true);
+  type OrbState = "idle" | "working" | "success" | "error" | "undo";
+
+  let orbState = $state<OrbState>("working");
   let files = $state(0);
   let bytes = $state(0);
   let rate = $state(0); // bytes/s
@@ -39,8 +43,12 @@
   let finished = $state(false);
   let errMsg = $state<string | null>(null);
 
+  // Live rate normalized 0..1 for the orb: GiB/s clamped at 12 GiB/s
+  // (0 freezes the particle field until real throughput arrives).
+  const orbRate = $derived(Math.min(1, rate / 2 ** 30 / 12));
+
   // Rust sends Finished BEFORE start_scan resolves; the demo resolves early and
-  // streams Finished later. Awaiting the event keeps the ring on screen until the
+  // streams Finished later. Awaiting the event keeps the orb working until the
   // scan actually completes in both worlds.
   let resolveFinished: (() => void) | undefined;
   const finishedEvent = new Promise<void>((r) => (resolveFinished = r));
@@ -54,13 +62,6 @@
           bytes = msg.bytes;
           rate = msg.rate_bps;
           current = msg.current;
-          // Rust ScanProgress::Files carries no total, so a determinate % is only
-          // possible when the transport supplies one (demo layer); otherwise the
-          // ring runs indeterminate and jumps to 100% on Finished — never a fake number.
-          if (typeof msg.total === "number" && msg.total > 0) {
-            indeterminate = false;
-            pct = Math.min(99, (msg.bytes / msg.total) * 100);
-          }
           break;
         }
         case "candidate":
@@ -72,8 +73,7 @@
           break;
         case "finished":
           finished = true;
-          indeterminate = false;
-          pct = 100;
+          orbState = "success";
           resolveFinished?.();
           break;
       }
@@ -83,6 +83,10 @@
       const path = await invoke("start_scan", { roots: ["~"], minBytes: null, channel: ch });
       await Promise.race([finishedEvent, new Promise((r) => setTimeout(r, 60_000))]);
       localStorage.setItem("last-scan-path", String(path));
+      if (finished) {
+        // Let the success beat read before leaving the screen (900ms swell).
+        await new Promise((r) => setTimeout(r, 900));
+      }
       ondone(String(path));
     } catch (e) {
       errMsg = String(e);
@@ -101,6 +105,7 @@
 
   function fmtBytes(n: number): string {
     if (!Number.isFinite(n) || n < 0) return "—";
+    if (n === 0) return "0 GB";
     if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
     if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
     return `${(n / 1e3).toFixed(1)} KB`;
@@ -115,7 +120,6 @@
 
 <div class="screen-head">
   <h1>{t("scan.title")}</h1>
-  <span class="sub mono">~</span>
 </div>
 
 {#if errMsg}
@@ -132,44 +136,33 @@
   </div>
 {:else}
   <div class="scan-stage">
-    <div class="ring">
-      <svg width="210" height="210" viewBox="0 0 210 210">
-        <circle class="bg-ring" cx="105" cy="105" r="92" fill="none" stroke-width="13" />
-        <circle
-          class="fg-ring {indeterminate ? 'indet' : ''}"
-          cx="105"
-          cy="105"
-          r="92"
-          fill="none"
-          stroke-width="13"
-          stroke-dasharray={indeterminate ? "120 458" : "578.05"}
-          stroke-dashoffset={578.05 * (1 - pct / 100)}
-        />
-      </svg>
-      <div class="core">
-        <div class="pct num">{indeterminate ? "…" : `${Math.round(pct)}%`}</div>
-        <div class="n num">{fmtCount(files)}</div>
-        <div class="n lbl">{finished ? t("scan.done") : t("scan.scanned")}</div>
+    <!-- the orb IS the ring: particles spiral in at live rate, count = files -->
+    <Orb size={220} state={orbState} rate={orbRate} count={files} />
+
+    <div class="stats">
+      <div class="stat-cell">
+        <MetricLine label={t("scan.scanned")} value={fmtBytes(bytes)} sub={`${fmtCount(files)} ${t("unit.files")}`} />
+      </div>
+      <div class="stat-cell">
+        <MetricLine label={t("scan.candidates")} value={fmtCount(candidates)} sub={fmtBytes(candBytes)} />
+      </div>
+      <div class="stat-cell">
+        <MetricLine label={t("scan.rate")} value={`${fmtGiB(rate)} GiB${t("scan.rate_unit")}`} />
       </div>
     </div>
 
-    <div class="scan-side">
-      {#if current}
-        <div class="current mono">{current}</div>
-      {/if}
-      <div class="rate num">
-        {fmtGiB(rate)}<small>GiB{t("scan.rate_unit")}</small>
-      </div>
-      <div class="meta">
-        <span class="num">{candidates} {t("scan.candidates")} · {fmtBytes(candBytes)}</span>
-        {#if rootErrs.length > 0}
-          <span class="num err">{rootErrs.length} {t("scan.root_errs")}</span>
-        {/if}
-      </div>
-      <div class="cancel-zone">
-        <button disabled={canceling || finished} onclick={cancel}>{t("scan.cancel")}</button>
-        <span class="note">{t("scan.cancel_note")}</span>
-      </div>
+    {#if current}
+      <div class="current mono">{current}</div>
+    {/if}
+
+    <div class="cancel-zone">
+      <PressButton
+        kind="ghost"
+        label={t("scan.cancel")}
+        disabled={canceling || finished}
+        onpress={cancel}
+      />
+      <span class="note">{t("scan.cancel_note")}</span>
     </div>
   </div>
 
@@ -209,117 +202,55 @@
     font-size: 15px;
     font-weight: 600;
   }
-  .sub {
-    font-size: 12px;
-    color: var(--text-faint);
-  }
 
   .scan-stage {
     flex: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 56px;
+    gap: 22px;
     padding: 12px 40px 20px;
     min-height: 0;
   }
 
-  .ring {
-    position: relative;
-    width: 210px;
-    height: 210px;
-    flex-shrink: 0;
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: min(560px, 100%);
   }
-  .ring svg {
-    transform: rotate(-90deg);
+  .stat-cell {
+    padding: 4px 20px 6px;
+    min-width: 0;
   }
-  .bg-ring {
-    stroke: var(--bg-raised);
+  .stat-cell:first-child {
+    padding-left: 2px;
   }
-  .fg-ring {
-    stroke: var(--accent);
-    stroke-linecap: round;
-    transition: stroke-dashoffset 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+  .stat-cell:last-child {
+    padding-right: 2px;
   }
-  .fg-ring.indet {
-    stroke-dashoffset: 0;
-    animation: ring-spin 1.6s linear infinite;
-    transform-origin: center;
-  }
-  @keyframes ring-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .ring .core {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-  }
-  .core .pct {
-    font-size: 38px;
-    font-weight: 700;
-    letter-spacing: -1px;
-  }
-  .core .n {
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .core .lbl {
-    font-size: 10px;
-    color: var(--text-faint);
+  .stat-cell + .stat-cell {
+    border-left: 1px solid var(--hairline);
   }
 
-  .scan-side {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    min-width: 280px;
-  }
   .current {
     font-size: 11px;
-    color: var(--text-faint);
-    word-break: break-all;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: var(--bg-raised);
-    border: 1px solid var(--hairline);
+    color: var(--mist);
     max-width: 420px;
-    max-height: 64px;
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .rate {
-    font-size: 22px;
-    font-weight: 650;
-  }
-  .rate small {
-    font-size: 11px;
-    color: var(--text-faint);
-    font-weight: 400;
-    margin-left: 6px;
-  }
-  .meta {
-    display: flex;
-    gap: 18px;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .meta .err {
-    color: var(--grade-expensive);
-  }
+
   .cancel-zone {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin-top: 4px;
+    align-items: center;
+    gap: 6px;
   }
   .cancel-zone .note {
     font-size: 10px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
 
   .cancel-banner {
@@ -330,30 +261,30 @@
     padding: 10px 14px;
     border: 1px solid var(--hairline);
     border-left: 2px solid var(--grade-expensive);
-    border-radius: 8px;
-    background: var(--bg-raised);
+    border-radius: var(--r-sm);
+    background: var(--surface);
     font-size: 12px;
-    color: var(--text-dim);
+    color: var(--mist);
   }
 
   .root-errs {
     margin: 0 28px 18px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
   }
   .root-row {
     display: flex;
     align-items: center;
     gap: 10px;
     font-size: 11px;
-    padding: 6px 12px;
-    border: 1px solid var(--hairline);
-    border-radius: 6px;
-    background: var(--bg-raised);
+    padding: 7px 2px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .root-row:last-child {
+    border-bottom: none;
   }
   .root-row .path {
-    color: var(--text-dim);
+    color: var(--mist);
   }
   .root-row .err {
     color: var(--grade-hands);
@@ -376,9 +307,9 @@
     margin: 0 28px;
     border: 1px solid var(--hairline);
     border-left: 2px solid var(--grade-hands);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 12px 14px;
-    background: var(--bg-raised);
+    background: var(--surface);
     font-size: 12px;
   }
   .rt-title {
@@ -386,7 +317,7 @@
     margin-bottom: 2px;
   }
   .rt-body {
-    color: var(--text-dim);
+    color: var(--mist);
     margin-bottom: 4px;
     word-break: break-all;
   }
@@ -394,6 +325,6 @@
     font-family: var(--mono);
   }
   .rt-alt {
-    color: var(--text-faint);
+    color: var(--mist);
   }
 </style>

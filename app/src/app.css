@@ -1,31 +1,58 @@
-/* Design language v2 (docs/mockups/README.md): deep navy #0c1118, one restore-teal
-   accent, hairline chrome, type-driven hierarchy, color = grade data only. */
-:root {
-  --bg: #0c1118;
-  --bg-raised: #111823;
-  --hairline: #1c2634;
-  --text: #dbe4ee;
-  --text-dim: #8b98a8;
-  --text-faint: #5c6875;
-  --accent: #2dd4bf; /* restore-teal */
-  --grade-pure: #34d399; /* green */
-  --grade-rebuild: #2dd4bf; /* teal */
-  --grade-redl: #60a5fa; /* blue */
-  --grade-expensive: #fbbf24; /* amber */
-  --grade-hands: #f87171; /* red */
-  --mono: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
-  --sans: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
-}
+/* 还我磁盘 — design tokens & base (docs/redesign-PLAN.md)
+   Dark committed palette (ink/surface, restore-teal accent ~8% of surface).
+   No accent borders, no gradient text, no glass, no uniform card grids.
+   Hairlines (--hairline) are the ONLY borders; elevation = layered shadows;
+   all state motion = interruptible CSS transitions on token durations. */
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f7fa;
-    --bg-raised: #ffffff;
-    --hairline: #dfe5ec;
-    --text: #1a2430;
-    --text-dim: #5c6875;
-    --text-faint: #97a3b1;
-  }
+:root {
+  color-scheme: dark;
+
+  /* palette */
+  --ink: #0a0e14;           /* page ground */
+  --surface: #111721;       /* raised surface */
+  --surface-lift: #16202c;  /* hover / press lift */
+  --text: #e8edf4;          /* near-white ink text */
+  --mist: #8b98a8;          /* secondary text */
+  --accent: #2dd4bf;        /* restore-teal — the one accent */
+  --accent-hover: #5eead4;
+  --accent-pressed: #14b8a6;
+  --danger: #f87171;
+  --amber: #fbbf24;
+
+  /* grade dots — data only (unchanged from v2) */
+  --grade-pure: #34d399;      /* green  */
+  --grade-rebuild: #2dd4bf;   /* teal   */
+  --grade-redl: #60a5fa;      /* blue   */
+  --grade-expensive: #fbbf24; /* amber  */
+  --grade-hands: #f87171;     /* red    */
+
+  /* motion — everything interruptible, nothing > 300ms (orb breath excluded) */
+  --t-fast: 150ms;
+  --t-med: 220ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1); /* ease-out */
+
+  /* radii — concentric: outer = inner + padding */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+
+  /* elevation — layered box-shadows, never solid borders */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.32), 0 1px 8px rgb(0 0 0 / 0.18);
+  --shadow-2: 0 2px 8px rgb(0 0 0 / 0.32), 0 8px 28px rgb(0 0 0 / 0.24);
+  --shadow-3: 0 4px 16px rgb(0 0 0 / 0.36), 0 16px 56px rgb(0 0 0 / 0.3);
+
+  /* hairline — the only border allowed */
+  --hairline: rgba(139, 152, 168, 0.14);
+
+  /* type */
+  --sans: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
+
+  /* legacy aliases — old names keep working; new code uses the names above */
+  --bg: var(--ink);
+  --bg-raised: var(--surface);
+  --text-dim: var(--mist);
+  --text-faint: rgba(139, 152, 168, 0.6);
 }
 
 * {
@@ -45,9 +72,15 @@ body {
   font-family: var(--sans);
   font-size: 13px;
   color: var(--text);
-  background: var(--bg);
+  background: var(--ink);
   -webkit-font-smoothing: antialiased;
   user-select: none;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
 }
 
 .num {
@@ -59,26 +92,79 @@ body {
   border-bottom: 1px solid var(--hairline);
 }
 
+::selection {
+  background: rgba(45, 212, 191, 0.28);
+}
+
+/* ---- craft floor: 40px hit areas, hairline chrome, focus rings ---- */
+
 button {
   font: inherit;
   color: inherit;
-  background: var(--bg-raised);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  padding: 6px 14px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  min-height: 40px;
+  padding: 6px 16px;
   cursor: pointer;
-}
-
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #06231f;
-  font-weight: 600;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-med) var(--ease);
 }
 
 button:disabled {
   opacity: 0.4;
   cursor: default;
+  transform: none;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+button.primary:active:not(:disabled) {
+  background: var(--accent-pressed);
+  transform: scale(0.96);
+}
+
+button.ghost {
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+button.ghost:hover:not(:disabled) {
+  background: var(--surface-lift);
+}
+button.ghost:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+button.danger {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+}
+button.danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.2);
+}
+button.danger:active:not(:disabled) {
+  background: rgba(248, 113, 113, 0.26);
+  transform: scale(0.96);
+}
+
+input,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  min-height: 40px;
+  padding: 0 12px;
 }
 
 :focus-visible {
@@ -86,9 +172,14 @@ button:disabled {
   outline-offset: 2px;
 }
 
+/* ---- reduced motion: zero the tokens, then hard-zero everything ---- */
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0.01ms;
+    --t-med: 0.01ms;
+  }
   * {
-    animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }

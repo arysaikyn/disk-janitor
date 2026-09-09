@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { t, getLocale, onLocaleChange } from "../lib/i18n";
   import { invoke } from "../lib/ipc";
+  import Orb from "../lib/Orb.svelte";
+  import MetricLine from "../lib/MetricLine.svelte";
+  import PressButton from "../lib/PressButton.svelte";
 
   interface Props {
     onstartscan: () => void;
@@ -63,12 +66,16 @@
 
   const vol = $derived(volumes[0] ?? null);
   const used = $derived(vol ? vol.total - vol.free_raw : 0);
-  const usedPct = $derived(vol && vol.total > 0 ? (used / vol.total) * 100 : 0);
   const recoverable = $derived(
     lastScan ? lastScan.candidates.reduce((a, c) => a + c.alloc_bytes, 0) : 0,
   );
   const awaiting = $derived(
     lastScan ? lastScan.candidates.filter((c) => !AUTO.has(c.grade)).length : 0,
+  );
+  // Snapshot footnote: hint always; the note only when a number is shown
+  // (when snapshot_held is null the note IS the value — no em-dash dead end).
+  const snapFootnote = $derived(
+    vol?.snapshot_held ? `${t("dash.snap_hint")} · ${t("dash.snap_note")}` : t("dash.snap_hint"),
   );
 
   function onetap() {
@@ -80,6 +87,7 @@
 
   function fmtBytes(n: number): string {
     if (!Number.isFinite(n) || n < 0) return "—";
+    if (n === 0) return "0 GB";
     if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
     if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
     return `${(n / 1e3).toFixed(1)} KB`;
@@ -107,76 +115,49 @@
     </div>
   {/if}
 
-  {#if vol}
-    <div class="vol-block">
-      <div class="vol-name">
-        {vol.mount}
-        {#if vol.fs}<span class="tag">{vol.fs}</span>{/if}
-        {#if vol.writable}<span class="tag ok">{t("dash.writable")}</span>{/if}
-      </div>
-      <div class="vol-bar"><div style="width: {usedPct}%"></div></div>
-      <div class="vol-free num">{fmtBytes(vol.free_raw)} <span>{t("common.available")}</span></div>
+  <!-- volume truth: one hairline row of three metric groups (SPEC §3.1) -->
+  <div class="metric-row">
+    <div class="metric-cell">
+      <MetricLine
+        label={t("dash.used")}
+        value={vol ? fmtBytes(used) : "—"}
+        sub={vol ? `/ ${fmtBytes(vol.total)}` : undefined}
+      />
     </div>
-  {/if}
-
-  {#if !loading && !lastScan}
-    <!-- first-run empty state (D-05): hint line, no wizard -->
-    <div class="empty">
-      <div class="big">{t("dash.empty_title")}</div>
-      <p>{t("dash.empty_privacy")}</p>
-      <button class="primary" onclick={onstartscan}>{t("dash.start_first")}</button>
+    <div class="metric-cell">
+      <MetricLine label={t("dash.free")} value={vol ? fmtBytes(vol.free_raw) : "—"} />
     </div>
-  {:else}
-    <div class="hero">
-      <div class="hero-inner">
-        <div class="hero-nums">
-          <div class="big num">
-            {fmtBytes(recoverable)}<span class="unit"> {t("dash.reclaimable")}</span>
-          </div>
-          <div class="row2">
-            <span class="num ok">0 {t("dash.destroyed")}</span>
-            <span class="num">{lastScan ? lastScan.candidates.length : 0} {t("common.candidates")}</span>
-            <span class="num dim">{t("dash.until_confirm")}</span>
-          </div>
-        </div>
-        <div class="hero-actions">
-          <button class="primary" onclick={() => onstartscan()}>{t("dash.scan_btn")}</button>
-          <button disabled={!lastScan} onclick={onetap}>{t("dash.onetap_btn")}</button>
-          {#if onetapNote}<div class="onetap-note">{onetapNote}</div>{/if}
-        </div>
-      </div>
-    </div>
-
-    {#if lastScan}
-      <div class="last-scan hairline-b">
-        <span class="lbl">{t("dash.last_scan")}</span>
-        <span class="num val">{lastScan.candidates.length} {t("common.candidates")}</span>
-        <span class="dim mono">{lastScan.roots[0] ?? ""}</span>
-      </div>
-    {/if}
-  {/if}
-
-  <!-- volume truth: raw free + snapshot-held as two labeled numbers (SPEC §3.1) -->
-  <div class="row3">
-    <div>
-      <div class="lbl">{t("dash.used")}</div>
-      <div class="val num">{fmtBytes(used)}</div>
-      <div class="note num">/ {vol ? fmtBytes(vol.total) : "—"}</div>
-    </div>
-    <div>
-      <div class="lbl">{t("dash.free")}</div>
-      <div class="val num">{vol ? fmtBytes(vol.free_raw) : "—"}</div>
-    </div>
-    <div>
-      <div class="lbl">
-        {t("dash.snapshot")} <span class="hint">{t("dash.snap_hint")}</span>
-      </div>
-      <div class="val num">{vol ? (vol.snapshot_held ? fmtBytes(vol.snapshot_held) : "—") : "—"}</div>
+    <div class="metric-cell">
+      {#if vol?.snapshot_held}
+        <MetricLine label={t("dash.snapshot")} value={fmtBytes(vol.snapshot_held)} sub={t("dash.snap_note")} />
+      {:else}
+        <MetricLine label={t("dash.snapshot")} value={t("dash.snap_hint")} small />
+      {/if}
     </div>
   </div>
-  <div class="footnote">
-    {t("dash.snap_hint")} {t("dash.snap_note")}
+
+  <!-- the engine at rest beside the one number that matters -->
+  <div class="orb-row">
+    <Orb size={96} state="idle" />
+    <MetricLine label={t("dash.reclaimable")} value={fmtBytes(recoverable)} sub={t("dash.undo_promise")} />
   </div>
+
+  <div class="actions">
+    <PressButton kind="primary" label={t("dash.scan_btn")} onpress={() => onstartscan()} />
+    <PressButton kind="ghost" label={t("dash.onetap_btn")} disabled={!lastScan} onpress={onetap} />
+    {#if onetapNote}<span class="note">{onetapNote}</span>{/if}
+  </div>
+
+  <!-- snapshot footnote: plain mist text, no box -->
+  <div class="footnote">{snapFootnote}</div>
+
+  {#if lastScan}
+    <div class="last-scan hairline-b">
+      <span class="lbl">{t("dash.last_scan")}</span>
+      <span class="num val">{lastScan.candidates.length} {t("common.candidates")}</span>
+      <span class="dim mono">{lastScan.roots[0] ?? ""}</span>
+    </div>
+  {/if}
 </div>
 
 
@@ -197,49 +178,71 @@
     padding: 0 28px 28px;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 24px;
   }
 
-  /* volume truth block */
-  .vol-block {
+  /* three labeled numbers — hairline-separated, not cards */
+  .metric-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .metric-cell {
+    padding: 4px 20px 6px;
+    min-width: 0;
+  }
+  .metric-cell:first-child {
+    padding-left: 2px;
+  }
+  .metric-cell:last-child {
+    padding-right: 2px;
+  }
+  .metric-cell + .metric-cell {
+    border-left: 1px solid var(--hairline);
+  }
+
+  /* the orb at rest + the reclaimable number */
+  .orb-row {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 28px;
   }
-  .vol-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-dim);
-    white-space: nowrap;
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
-  .vol-name .tag {
-    font-size: 10px;
-    color: var(--accent);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    padding: 1px 6px;
-    margin-left: 6px;
-    font-weight: 500;
+  .actions .note {
+    font-size: 11px;
+    color: var(--mist);
   }
-  .vol-name .tag.ok {
-    color: var(--text-dim);
+
+  .footnote {
+    font-size: 11px;
+    color: var(--mist);
   }
-  .vol-bar {
-    flex: 1;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-raised);
-    overflow: hidden;
-  }
-  .vol-bar > div {
-    height: 100%;
-    background: linear-gradient(90deg, var(--hairline), var(--accent));
-    border-radius: 3px;
-  }
-  .vol-free {
+
+  .last-scan {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 2px 2px 12px;
     font-size: 12px;
-    color: var(--text-faint);
+  }
+  .last-scan .lbl {
+    color: var(--mist);
+  }
+  .last-scan .val {
+    color: var(--text);
+  }
+  .last-scan .dim {
+    color: var(--mist);
+    font-size: 11px;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+    max-width: 40%;
   }
 
   /* P1 refusal banner */
@@ -249,9 +252,9 @@
     align-items: flex-start;
     border: 1px solid var(--hairline);
     border-left: 2px solid var(--grade-hands);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 12px 14px;
-    background: var(--bg-raised);
+    background: var(--surface);
     font-size: 12px;
   }
   .rdot {
@@ -267,7 +270,7 @@
     margin-bottom: 2px;
   }
   .rt-body {
-    color: var(--text-dim);
+    color: var(--mist);
     margin-bottom: 4px;
     word-break: break-all;
   }
@@ -275,139 +278,6 @@
     font-family: var(--mono);
   }
   .rt-alt {
-    color: var(--text-faint);
-  }
-
-  /* hero stage — one hero number per screen */
-  .hero {
-    border: 1px solid var(--hairline);
-    border-radius: 14px;
-    background: var(--bg-raised);
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
-  }
-  .hero-inner {
-    display: flex;
-    align-items: center;
-    gap: 28px;
-    padding: 22px 26px;
-  }
-  .hero-nums {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .hero-nums .big {
-    font-size: 32px;
-    font-weight: 700;
-    letter-spacing: -1.5px;
-  }
-  .hero-nums .big .unit {
-    font-size: 14px;
-    color: var(--text-faint);
-    font-weight: 500;
-    letter-spacing: 0;
-  }
-  .row2 {
-    display: flex;
-    gap: 18px;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .row2 .ok {
-    color: var(--accent);
-  }
-  .row2 .dim {
-    color: var(--text-faint);
-  }
-  .hero-actions {
-    margin-left: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    align-items: stretch;
-  }
-  .onetap-note {
-    font-size: 11px;
-    color: var(--text-faint);
-    text-align: center;
-  }
-
-  /* empty state */
-  .empty {
-    text-align: center;
-    padding: 60px 20px 40px;
-    color: var(--text-dim);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-  .empty .big {
-    font-size: 15px;
-    color: var(--text);
-    font-weight: 600;
-  }
-  .empty p {
-    font-size: 12px;
-    margin-bottom: 10px;
-  }
-
-  .last-scan {
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    padding: 2px 2px 12px;
-    font-size: 12px;
-  }
-  .last-scan .lbl {
-    color: var(--text-faint);
-  }
-  .last-scan .val {
-    color: var(--text-dim);
-  }
-  .last-scan .dim {
-    color: var(--text-faint);
-    font-size: 11px;
-    margin-left: auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 40%;
-  }
-
-  /* three labeled numbers — hairline-separated, not cards */
-  .row3 {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 1px;
-    background: var(--hairline);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-  .row3 > div {
-    background: var(--bg);
-    padding: 13px 16px;
-  }
-  .row3 .lbl {
-    font-size: 10px;
-    color: var(--text-faint);
-    margin-bottom: 3px;
-  }
-  .row3 .val {
-    font-size: 17px;
-    font-weight: 600;
-  }
-  .row3 .note {
-    font-size: 10px;
-    color: var(--text-faint);
-    margin-top: 2px;
-  }
-  .hint {
-    border-bottom: 1px dotted var(--hairline);
-    cursor: help;
-  }
-  .footnote {
-    font-size: 10px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
 </style>

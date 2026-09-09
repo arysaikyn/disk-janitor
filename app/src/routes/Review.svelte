@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { t, gradeName, getLocale, onLocaleChange, evidenceName } from "../lib/i18n";
   import { invoke } from "../lib/ipc";
+  import MetricLine from "../lib/MetricLine.svelte";
+  import Row from "../lib/Row.svelte";
+  import PressButton from "../lib/PressButton.svelte";
 
   interface Props {
     scanPath: string | null;
@@ -62,7 +65,6 @@
   let safeOpen = $state(false);
   let openRow = $state<string | null>(null);
   let building = $state(false);
-  let planSummary = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -80,18 +82,20 @@
     scan ? scan.candidates.reduce((a, c) => a + c.alloc_bytes, 0) : 0,
   );
 
-  function gradeColor(grade: string): string {
+  // Row's grade prop takes the CSS var name minus the -- prefix (§3.1 dot map:
+  // pure green, rebuild teal, redl blue, expensive amber, hands red).
+  function gradeVar(grade: string): string {
     switch (grade) {
       case "pure_cache":
-        return "var(--grade-pure)";
+        return "grade-pure";
       case "rebuildable_from_source":
-        return "var(--grade-rebuild)";
+        return "grade-rebuild";
       case "redownloadable":
-        return "var(--grade-redl)";
+        return "grade-redl";
       case "expensive":
-        return "var(--grade-expensive)";
+        return "grade-expensive";
       default:
-        return "var(--grade-hands)";
+        return "grade-hands";
     }
   }
 
@@ -138,11 +142,6 @@
         minBytes: null,
       })) as PlanManifest;
       localStorage.setItem("last-plan-id", plan.plan_id);
-      const q = plan.totals;
-      planSummary = t("plan.summary")
-        .replace("{n}", String(q.quarantine_entries))
-        .replace("{m}", String(q.prune_cmds))
-        .replace("{k}", String(q.refused));
       onplan(plan.plan_id);
     } catch (e) {
       err = String(e);
@@ -152,6 +151,7 @@
 
   function fmtBytes(n: number): string {
     if (!Number.isFinite(n) || n < 0) return "—";
+    if (n === 0) return "0 GB";
     if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
     if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
     return `${(n / 1e3).toFixed(1)} KB`;
@@ -187,46 +187,29 @@
       <p>{t("review.empty2")}</p>
     </div>
   {:else if !loading && scan}
-    <div class="rev-hero">
-      <div class="rev-hero-inner">
-        <div class="big num">{fmtBytes(heroBytes)}</div>
-        <div class="meta">
-          <div class="l1">
-            {t("review.safe_count").replace("{n}", String(safeList.length))}
-            <span class="sep">·</span>
-            {t("review.judge_count").replace("{n}", String(judgeList.length))}
-          </div>
-          <div class="l2 num">0 {t("dash.destroyed")} · {t("plan.grace")}</div>
-        </div>
-      </div>
-    </div>
+    <!-- top: the one number + the safe/judge split as mist text (no box) -->
+    <MetricLine
+      label={t("dash.reclaimable")}
+      value={fmtBytes(heroBytes)}
+      sub={`${t("review.safe_count").replace("{n}", String(safeList.length))} · ${t("review.judge_count").replace("{n}", String(judgeList.length))}`}
+    />
+    <div class="promise num">0 {t("dash.destroyed")} · {t("plan.grace")}</div>
 
     <!-- safe grades: ONE summary row, expandable (exception-centered review) -->
-    <div
-      class="safe-line"
-      role="button"
-      tabindex="0"
-      onclick={() => (safeOpen = !safeOpen)}
-      onkeydown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          safeOpen = !safeOpen;
-        }
-      }}
-    >
-      <span class="dot" style="background: var(--grade-pure)"></span>
-      <span class="lbl">
-        <b class="num">{fmtBytes(safeBytes)}</b> {t("review.safe_lbl")} · {safeList.length}
-        {t("common.candidates")}
-      </span>
-      <span class="chev {safeOpen ? 'open' : ''}">▾</span>
-    </div>
+    <ul class="rows">
+      <Row grade="grade-pure" index={0} onclick={() => (safeOpen = !safeOpen)}>
+        <span class="row-main">
+          <b class="num">{fmtBytes(safeBytes)}</b>
+          <span class="lbl">{t("review.safe_lbl")} · {safeList.length} {t("common.candidates")}</span>
+          <span class="chev" class:open={safeOpen}>▾</span>
+        </span>
+      </Row>
+    </ul>
     {#if safeOpen}
       <div class="safe-drawer">
         {#each safeList.slice(0, 5) as c (c.id)}
           <div class="sd-row">
-            <span class="gdot" style="background: {gradeColor(c.grade)}"></span>
-            <span class="sd-path">{c.path}</span>
+            <span class="sd-path mono">{c.path}</span>
             <span class="sd-bytes num">{fmtBytes(c.alloc_bytes)}</span>
           </div>
         {/each}
@@ -243,33 +226,23 @@
       </div>
 
       <!-- judgment rows + welded-visible refusals: red dot + reason (SPEC §5.2) -->
-      <div class="judge-list">
-        {#each judgeList as c (c.id)}
-          <div
-            class="judge-row {openRow === c.id ? 'open' : ''}"
-            role="button"
-            tabindex="0"
-            onclick={() => toggleRow(c.id)}
-            onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                toggleRow(c.id);
-              }
-            }}
-          >
-            <span class="gdot" style="background: {gradeColor(c.grade)}"></span>
-            <span class="grade-word">{gradeName(c.grade)}</span>
-            <span class="jr-path">{c.path}</span>
-            <span class="jr-bytes num">{fmtBytes(c.alloc_bytes)}</span>
-            {#if c.grade === "hands_off"}
-              <span class="jr-refuse">{refuseReason(c)}</span>
-            {/if}
-          </div>
+      <ul class="rows">
+        {#each judgeList as c, i (c.id)}
+          <Row grade={gradeVar(c.grade)} index={i + 1} onclick={() => toggleRow(c.id)}>
+            <span class="row-main">
+              <span class="grade-word">{gradeName(c.grade)}</span>
+              <span class="jr-path mono">{c.path}</span>
+              <span class="jr-bytes num">{fmtBytes(c.alloc_bytes)}</span>
+              {#if c.grade === "hands_off"}
+                <span class="jr-refuse">{refuseReason(c)}</span>
+              {/if}
+            </span>
+          </Row>
           {#if openRow === c.id}
-            <div class="jr-detail open">
-              {#each c.evidence as ev, i (i)}
+            <li class="jr-detail">
+              {#each c.evidence as ev, k (k)}
                 <div class="ev">
-                  <span class="n">{i + 1}</span>
+                  <span class="n">{k + 1}</span>
                   <span class="k">{evKind(ev.kind).label}</span>
                   <span class="v">{ev.detail}</span>
                   <span class="s">{strengthLabel(ev.strength)}</span>
@@ -287,20 +260,15 @@
               {#if c.grade === "hands_off"}
                 <div class="regen alt">{refuseReason(c)}</div>
               {/if}
-            </div>
+            </li>
           {/if}
         {/each}
-      </div>
+      </ul>
     {/if}
 
     <div class="rev-foot">
-      <span>{t("review.selected").replace("{n}", String(safeList.length))}</span>
-      <span class="num">· {fmtBytes(safeBytes)}</span>
-      {#if planSummary}<span class="plan-summary num">{planSummary}</span>{/if}
       <span class="spacer"></span>
-      <button class="primary" disabled={building} onclick={build}>
-        {t("review.build_plan")}
-      </button>
+      <PressButton kind="primary" label={t("review.build_plan")} disabled={building} onpress={build} />
     </div>
   {/if}
 </div>
@@ -321,100 +289,66 @@
   }
   .sub {
     font-size: 12px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
 
   .review {
     padding: 0 28px 24px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     flex: 1;
     min-height: 0;
   }
 
-  /* hero — one hero number per screen */
-  .rev-hero {
-    border: 1px solid var(--hairline);
-    border-radius: 14px;
-    background: var(--bg-raised);
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
-  }
-  .rev-hero-inner {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    padding: 18px 24px;
-  }
-  .rev-hero .big {
-    font-size: 36px;
-    font-weight: 700;
-    letter-spacing: -2px;
-  }
-  .rev-hero .meta {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .rev-hero .l1 {
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .rev-hero .l2 {
-    font-size: 11px;
-    color: var(--text-faint);
+  .promise {
+    font-size: 12px;
+    color: var(--mist);
   }
 
-  /* safe summary row + drawer */
-  .safe-line {
+  /* row lists — hairline separators only, no boxes (Row ships its own
+     per-row top hairline; first row exempted via :first-child) */
+  .rows {
+    display: flex;
+    flex-direction: column;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .row-main {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: var(--bg-raised);
-    cursor: pointer;
-    font-size: 13px;
+    flex: 1;
+    min-width: 0;
   }
-  .safe-line:hover {
-    background: #141c28;
-  }
-  .safe-line .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .safe-line .lbl {
-    color: var(--text-dim);
-  }
-  .safe-line .lbl b {
+  .row-main b {
     color: var(--text);
     font-weight: 600;
   }
-  .safe-line .chev {
-    margin-left: auto;
-    color: var(--text-faint);
-    font-size: 10px;
-    transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+  .row-main .lbl {
+    color: var(--mist);
   }
-  .safe-line .chev.open {
+  .chev {
+    margin-left: auto;
+    color: var(--mist);
+    font-size: 10px;
+    transition: transform var(--t-med) var(--ease);
+  }
+  .chev.open {
     transform: rotate(180deg);
   }
+
+  /* safe drawer: indented rows, hairline separators */
   .safe-drawer {
-    border: 1px solid var(--hairline);
-    border-top: none;
-    border-radius: 0 0 10px 10px;
-    background: var(--bg);
-    padding: 4px 14px 8px;
-    margin-top: -12px;
+    padding: 2px 2px 6px;
   }
   .sd-row {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 0;
+    padding: 6px 2px;
     border-bottom: 1px solid var(--hairline);
     font-size: 12px;
   }
@@ -425,7 +359,7 @@
     flex: 1;
     font-family: var(--mono);
     font-size: 11px;
-    color: var(--text-dim);
+    color: var(--mist);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -433,12 +367,12 @@
   .sd-bytes {
     font-family: var(--mono);
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
   .sd-more {
-    padding: 6px 0 2px;
+    padding: 6px 2px 2px;
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
 
   .judge-head {
@@ -451,41 +385,13 @@
   }
   .judge-head .n {
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--mist);
     font-weight: 400;
   }
 
-  .judge-list {
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    overflow: hidden;
-    background: var(--bg-raised);
-  }
-  .judge-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--hairline);
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .judge-row:last-of-type {
-    border-bottom: none;
-  }
-  .judge-row:hover,
-  .judge-row.open {
-    background: #141c28;
-  }
-  .gdot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
   .grade-word {
     font-size: 11px;
-    color: var(--text-dim);
+    color: var(--mist);
     width: 84px;
     flex-shrink: 0;
   }
@@ -497,11 +403,12 @@
     white-space: nowrap;
     font-family: var(--mono);
     font-size: 12px;
+    color: var(--text);
   }
   .jr-bytes {
     font-family: var(--mono);
     font-size: 12px;
-    color: var(--text-dim);
+    color: var(--mist);
     flex-shrink: 0;
   }
   .jr-refuse {
@@ -510,28 +417,27 @@
     flex-shrink: 0;
   }
 
+  /* evidence detail: attached to its row, hairline-topped, indented mist
+     (no bottom border — the following Row brings its own top hairline) */
   .jr-detail {
-    display: none;
-    padding: 8px 16px 12px 40px;
-    background: #0a0f16;
-    border-bottom: 1px solid var(--hairline);
-  }
-  .jr-detail.open {
     display: block;
+    padding: 10px 16px 12px 34px;
+    border-top: 1px solid var(--hairline);
+    font-size: 12px;
+    color: var(--mist);
   }
   .ev {
     display: flex;
     gap: 10px;
-    font-size: 12px;
     padding: 3px 0;
-    color: var(--text-dim);
   }
   .ev .n {
-    color: var(--text-faint);
+    color: var(--mist);
     font-size: 10px;
     width: 10px;
     flex-shrink: 0;
     padding-top: 1px;
+    opacity: 0.7;
   }
   .ev .k {
     color: var(--text);
@@ -548,13 +454,14 @@
   .ev .s {
     margin-left: auto;
     font-size: 10px;
-    color: var(--text-faint);
+    color: var(--mist);
     flex-shrink: 0;
     white-space: nowrap;
+    opacity: 0.75;
   }
   .regen {
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--mist);
     margin-top: 6px;
     font-family: var(--mono);
   }
@@ -567,17 +474,7 @@
   .rev-foot {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding-top: 2px;
-    font-size: 12px;
-    color: var(--text-faint);
-  }
-  .rev-foot b {
-    color: var(--text);
-  }
-  .rev-foot .plan-summary {
-    font-size: 11px;
-    color: var(--accent);
+    padding-top: 4px;
   }
   .rev-foot .spacer {
     flex: 1;
@@ -586,7 +483,7 @@
   .empty {
     text-align: center;
     padding: 70px 20px;
-    color: var(--text-dim);
+    color: var(--mist);
   }
   .empty .big {
     font-size: 15px;
@@ -602,9 +499,9 @@
     align-items: flex-start;
     border: 1px solid var(--hairline);
     border-left: 2px solid var(--grade-hands);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 12px 14px;
-    background: var(--bg-raised);
+    background: var(--surface);
     font-size: 12px;
   }
   .rdot {
@@ -620,7 +517,7 @@
     margin-bottom: 2px;
   }
   .rt-body {
-    color: var(--text-dim);
+    color: var(--mist);
     margin-bottom: 4px;
     word-break: break-all;
   }
