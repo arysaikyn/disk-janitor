@@ -879,7 +879,7 @@ D-17 uninstall | Uninstall = restore-or-explicitly-confirm every surviving quara
 D-18 format_versioning | Owner: "not just for a class — real product." Decision: product-grade policy = forward-compat replay (unknown kinds/fields skipped + counted, serde deny_unknown_fields OFF) + v1 frozen until post-course; migrations allowed only with version-gated migration passes after 9/10 | ADR-17 (data format versioning) + DESIGN §3.5 note
 D-19 ai_log_workflow | Per-milestone export to docs/ai-logs/M<N>-<date>.md (excerpts + timestamps, API keys/privacy redacted) | new docs/ai-logs/ convention + README note
 D-20 expense_sheet | Standard columns: date / model / calls / prompt+completion tokens / cost USD + CNY; ledger budget rec gains model field; janitor expense-report subcommand; scope = LLM API spend | DESIGN §3.5 ledger rec payload + ADR-9 note
-D-21 demo_dataset | (pending owner after competitor-presentation research — note 13) demo will be PRODUCT VIDEO (Screen Studio/Hyperframes) + live preview; dataset decision deferred to video-script step | DESIGN §8 M5 note
+D-21 demo_dataset | Demo = PRODUCT VIDEO (Screen Studio/Hyperframes capture) + live preview; dataset = synthetic fixture tree per SPEC §7 (never real user data); capture can be automated via browser/process automation — owner involvement optional, keyless fallback D-22 trajectory replay | DESIGN §8 M5 note + SPEC §7 fixtures
 D-22 demo_llm | Product video + live preview after (owner explicit). Fallback chain: live DeepSeek → pre-recorded trajectory replay | DESIGN §8 M5 note
 
 ## Round 4 (research wave 09-01, owner-confirmed via decision sheet)
