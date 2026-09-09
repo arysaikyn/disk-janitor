@@ -34,7 +34,6 @@ pub type PathHash = [u8; 8];
 
 /// Evidence signal kinds — SPEC §3.2 table + §6.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum EvidenceKind {
     LockfilePresent,
     SiblingManifestMissing,
@@ -49,9 +48,9 @@ pub enum EvidenceKind {
     Dataless,
     FlagBlock(String), // UfSf flag name, e.g. "UF_IMMUTABLE"
     QuarantineXattr,
+    BuildArtifactShape,
     Unreadable,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Strength {

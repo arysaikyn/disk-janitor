@@ -115,24 +115,57 @@ pub fn classify_dir(
     if class == PathClass::Unknown {
         return None;
     }
+    // Whole-store prune targets (CAS stores, generic caches): MtimeHot and orphan do NOT
+    // regrade them — npm _cacache is "always hot" yet whole-store prune stays the correct
+    // action [03 risks #7], and a global cache never has a manifest ancestor by design.
+    let is_store = matches!(class, PathClass::CasStore(_) | PathClass::GenericCache(_));
+    // Manifest-pinned build trees (node_modules/.venv/target) — the orphan rule's scope
+    // per §3.2 `SiblingManifestMissing`; Xcode re-derives DerivedData from source ([03 §4]).
+    let is_pinned_tree = matches!(
+        class,
+        PathClass::NodeModules | PathClass::RustTarget | PathClass::PythonVenv
+    );
     let mut evidence: Vec<Evidence> = Vec::new();
-    let mtime_now = SystemTime::now();
-    let hot = agg
-        .max_mtime
-        .map(|m| {
-            mtime_now
-                .duration_since(m)
-                .map(|d| d < th.hot_mtime)
-                .unwrap_or(true)
-        })
-        .unwrap_or(false);
 
+    let mtime_now = SystemTime::now();
+    let hot = !is_store
+        && agg
+            .max_mtime
+            .map(|m| {
+                mtime_now
+                    .duration_since(m)
+                    .map(|d| d < th.hot_mtime)
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false);
+
+    // Xcode DerivedData: the directory itself is machine-derived build output [03 §4] —
+    // the recognized DerivedData path shape is itself Strong evidence (no manifest needed;
+    // it re-derives from source via xcodebuild).
+    if class == PathClass::XcodeDerivedData {
+        evidence.push(Evidence {
+            kind: EvidenceKind::BuildArtifactShape,
+            detail: "DerivedData path shape (Xcode build output)".into(),
+            strength: Strength::Strong,
+        });
+    }
     // Orphan probe FIRST (promotion rule [03 §0]): no manifest in any ancestor.
-    let orphan = anc.manifest.is_none();
+    let orphan = is_pinned_tree && anc.manifest.is_none();
     if orphan {
         evidence.push(Evidence {
             kind: EvidenceKind::OrphanTree,
             detail: "no build manifest in any ancestor (project deleted?)".into(),
+            strength: Strength::Strong,
+        });
+    }
+    // CAS-store shape probe: hash-named children confirm a real store [03 §0]. Shape-less
+    // store-named dirs keep zero evidence ⇒ dropped by the ≥1-signal rule below.
+    if let PathClass::CasStore(kind) = &class
+        && cas_shape_ok(&dir.parent.join(&dir.name), kind)
+    {
+        evidence.push(Evidence {
+            kind: EvidenceKind::CasStore,
+            detail: format!("{} store shape confirmed ({}/)", kind, cas_child_name(kind)),
             strength: Strength::Strong,
         });
     }
@@ -164,13 +197,9 @@ pub fn classify_dir(
             strength: Strength::Medium,
         });
     }
-    if dir.nlink > 1 {
-        evidence.push(Evidence {
-            kind: EvidenceKind::Hardlinked,
-            detail: format!("nlink={} (deleting one of N frees 0)", dir.nlink),
-            strength: Strength::Medium,
-        });
-    }
+    // NOTE: no Hardlinked probe here — POSIX forbids hardlinking directories, so a dir's
+    // nlink>1 is just its subdir count, never a byte-discount signal. File candidates
+    // carry the hardlink probe in `candidates_from_batch`.
     // Flag probe on the actual candidate (walker carries flags=0; apply re-verifies — TOCTOU armor).
     let flags = probe_flags(&dir.parent.join(&dir.name));
     if flags & (UF_IMMUTABLE | SF_RESTRICTED | SF_NOUNLINK | UF_DATAVAULT | SF_DATALESS) != 0 {
@@ -184,7 +213,10 @@ pub fn classify_dir(
         return None; // every verdict carries ≥1 signal [03 §0]
     }
 
-    let grade = if orphan {
+    // MtimeHot gates auto-action; a hot orphan is never even surfaced for deletion (in-use).
+    let grade = if orphan && hot {
+        Grade::HandsOff // actively-written orphan: safe default is to leave it alone
+    } else if orphan {
         Grade::Expensive // surface as prompt, never auto-delete [03 §0]
     } else if hot {
         Grade::HandsOff
@@ -207,6 +239,42 @@ pub fn classify_dir(
         clone_id: dir.clone_id,
         locked: false, // flock-marker probe lands with M2 FileLock evidence
     })
+}
+
+/// Expected first-level child of each CAS store layout [03 §0/§1/§3]:
+/// npm `_cacache/content-v2/sha512`, pnpm store `files/`, uv cache `archive-v0`.
+fn cas_child_name(kind: &str) -> &'static str {
+    match kind {
+        "npm" => "content-v2",
+        "pnpm" => "files",
+        "uv" => "archive-v0",
+        _ => "?",
+    }
+}
+
+/// One-level-deep shape check: the store root must contain its hash-named child dir.
+fn cas_shape_ok(store: &Path, kind: &str) -> bool {
+    let expected = cas_child_name(kind);
+    let Ok(entries) = std::fs::read_dir(store) else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|e| {
+        e.file_name().as_encoded_bytes() == expected.as_bytes()
+            && e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+    })
+}
+
+/// `com.apple.quarantine` xattr probe — downloaded-by-app ⇒ Redownloadable [05 §6].
+/// Any error (ENOATTR, EPERM under TCC, io) reads as "no quarantine".
+pub fn quarantine_evidence(path: &Path) -> Option<Evidence> {
+    match xattr::get(path, "com.apple.quarantine") {
+        Ok(Some(_)) => Some(Evidence {
+            kind: EvidenceKind::QuarantineXattr,
+            detail: "com.apple.quarantine xattr present (downloaded by an app)".into(),
+            strength: Strength::Medium,
+        }),
+        _ => None,
+    }
 }
 
 fn flag_name(flags: u32) -> String {

@@ -42,8 +42,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 roots
             };
-            let _ = min_bytes;
-            janitor_scan::run_scan(roots)
+            janitor_scan::run_scan(roots, min_bytes)
         }
     }
 }
@@ -51,11 +50,17 @@ pub mod janitor_scan {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
-    use disk_janitor::scan::{ScanOptions, ScanStats};
+    use disk_janitor::Thresholds;
+    use disk_janitor::classify;
+    use disk_janitor::scan::{self, ScanEvent, ScanOptions, ScanStats};
 
-    pub fn run_scan(_roots: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
-        let _opts = ScanOptions {
-            roots: Vec::new(),
+    /// Scan pipeline (SPEC §3.1→§3.2): scan thread → channel → classify → JSON envelope
+    /// to stdout. JSON shape: {"scan": ScanTotals, "candidates": [Candidate…]}.
+    pub fn run_scan(roots: Vec<std::path::PathBuf>, min_bytes: Option<u64>) -> anyhow::Result<()> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stats = Arc::new(ScanStats::default());
+        let opts = ScanOptions {
+            roots: roots.clone(),
             threads: std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4),
@@ -63,8 +68,34 @@ pub mod janitor_scan {
             ignore: Vec::new(),
             min_dir_bytes: 0,
         };
-        let _cancel = Arc::new(AtomicBool::new(false));
-        let _stats = Arc::new(ScanStats::default());
-        unimplemented!("M1: scan --json pipeline (scan thread -> classify -> JSON out)")
+        let (tx, rx) = crossbeam_channel::bounded::<ScanEvent>(100);
+        let handle = scan::start(opts, tx, cancel, stats.clone());
+        let mut batches: Vec<disk_janitor::scan::DirStat> = Vec::new();
+        let mut totals = None;
+        for event in rx {
+            match event {
+                ScanEvent::Batch(b) => batches.extend(b),
+                ScanEvent::RootError { root, err } => {
+                    eprintln!("scan error at {}: {err}", root.display());
+                }
+                ScanEvent::Finished(t) => {
+                    totals = Some(t);
+                    break;
+                }
+            }
+        }
+        let scan_totals = totals.ok_or_else(|| anyhow::anyhow!("scan ended without totals"))?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("scan thread panicked"))?;
+        let th = Thresholds {
+            min_bytes: min_bytes.unwrap_or(Thresholds::default().min_bytes),
+            ..Thresholds::default()
+        };
+        let candidates = classify::candidates_from_batch(batches, &th);
+        let envelope = serde_json::json!({ "scan": scan_totals, "candidates": candidates });
+        serde_json::to_writer_pretty(std::io::stdout().lock(), &envelope)?;
+        println!();
+        Ok(())
     }
 }
