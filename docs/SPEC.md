@@ -38,7 +38,7 @@ final submission. R1–R6 mapping verified verbatim against the rubric.
   ## 3. Scenario customizations (course mandate: ≥2)
   ## 4. Architecture sketch
   ## 5. R1–R6 mapping (功能完整性, 30 pts)
-  ## 6. Milestones (course deadlines: 9.1 comments · 9.6 public demo · 9.8 try-3 · 9.10 展示 · 9.13 submission)
+  ## 6. Milestones (official 作业要求: 9.1 ≥3 选题评论 · 9.6 公开展示帖 · 9.8 ≥3 试用反馈 · 9.10 课堂展示 · 9.13 23:59 提交)
   ## 7. Open questions / risks (owner flagged these as gut-feel)
   ## 8. Explicit non-goals
   ## History
