@@ -122,6 +122,11 @@ pub struct PlanEntry {
     pub grade: Grade,
     pub action: PlanAction,
     pub evidence: Vec<Evidence>,
+    /// (dev, ino) of the underlying inode — the hardlink dedup key for byte
+    /// totals (SPEC §3.3: the same inode can only be reclaimed once). `None`
+    /// for manifests predating this field: such entries are treated as their
+    /// own inode (legacy Σ semantics), never collapsed into one dedup group.
+    pub inode: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -15,6 +15,9 @@
   let checked = $state(false);
   let attempts = $state(0);
   let mismatch = $state(false);
+  // B3: the Rust Err(String) refusal surfaces verbatim instead of being
+  // swallowed — a deadlocked purge must be visible, not silent.
+  let error = $state<string | null>(null);
   let phase = $state<"input" | "purging" | "done">("input");
   let freed = $state<number | null>(null);
 
@@ -25,6 +28,7 @@
   function onInput(e: Event) {
     typed = (e.target as HTMLInputElement).value;
     mismatch = false;
+    error = null;
   }
 
   // A failed attempt = submit (Enter / Destroy click) with a non-matching value.
@@ -52,9 +56,16 @@
       });
       freed = res?.bytes_freed ?? res?.freed_bytes ?? bytes;
       phase = "done";
-    } catch {
+    } catch (e) {
       phase = "input";
       mismatch = true;
+      // Verbatim refusal from Rust (Err(String)); Tauri may wrap it in an Error.
+      error =
+        typeof e === "string"
+          ? e
+          : e instanceof Error
+            ? e.message
+            : "purge failed — see application logs";
     }
   }
 </script>
@@ -100,6 +111,9 @@
           <div class="mismatch">{t("purge.mismatch")}</div>
         {:else if attempts >= 3}
           <div class="hint num">{formatInt(bytes)}</div>
+        {/if}
+        {#if error}
+          <div class="err" role="alert">{error}</div>
         {/if}
       </div>
 
@@ -222,6 +236,12 @@
     font-size: 12px;
     color: var(--text-faint);
     opacity: 0.55;
+  }
+  .err {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--grade-hands);
+    word-break: break-word;
   }
   .shake {
     animation: shake 0.3s ease;

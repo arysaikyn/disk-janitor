@@ -67,8 +67,8 @@
   let recs = $state<LedgerRow[]>([]);
   let loading = $state(true);
   let err = $state<string | null>(null);
-  let restoring = $state<string | null>(null); // seq being restored
-  let restored = $state<Set<number>>(new Set());
+  let restoring = $state<string | null>(null); // op_id being restored (op-scoped)
+  let restored = $state<Set<number>>(new Set()); // seqs restored in this session
   let restoreErr = $state<string | null>(null);
   // D-29: countdown ticks from ledger-recorded grace_expires_at only.
   let now = $state(Date.now());
@@ -121,10 +121,50 @@
     return { h: Math.floor(ms / 3_600_000), m: Math.floor((ms % 3_600_000) / 60_000) };
   }
 
+  // C3 row lifecycle. "restored" is decided by the DURABLE ledger signal — a
+  // restore rec whose `from` matches this apply rec's quarantine_path (survives
+  // reloads) — plus the in-session op-wide mark. "destroyed" falls out of a
+  // purge rec on the same path (keeps the restore button off already-purged
+  // rows, so a no-op click cannot happen for them).
+  type RowState = "live" | "expired" | "restored" | "destroyed";
+
+  const restoreRecByQpath = $derived.by(() => {
+    const m = new Map<string, RestoreRec>();
+    for (const r of recs) {
+      if (r.kind === "restore") {
+        const rr = r.rec as unknown as RestoreRec;
+        if (rr.from) m.set(rr.from, rr);
+      }
+    }
+    return m;
+  });
+  const purgeRecByQpath = $derived.by(() => {
+    const m = new Map<string, PurgeRec>();
+    for (const r of recs) {
+      if (r.kind === "purge") {
+        const pr = r.rec as unknown as PurgeRec;
+        if (pr.quarantine_path) m.set(pr.quarantine_path, pr);
+      }
+    }
+    return m;
+  });
+
+  function rowState(row: LedgerRow): RowState {
+    const rec = row.rec as ApplyRec;
+    if (restoreRecByQpath.has(rec.quarantine_path) || restored.has(row.seq)) {
+      return "restored";
+    }
+    if (purgeRecByQpath.has(rec.quarantine_path)) {
+      return "destroyed";
+    }
+    const rem = graceRemaining(rec.undo.grace_expires_at);
+    return rem.h + rem.m > 0 ? "live" : "expired";
+  }
+
   async function restore(row: LedgerRow) {
     const rec = row.rec as ApplyRec;
     const opId = opIdOf(rec.quarantine_path);
-    restoring = String(row.seq);
+    restoring = opId;
     restoreErr = null;
     const ch = channel<ExecMsg>();
     ch.onmessage = () => {
@@ -132,8 +172,25 @@
          shows the resulting ledger `restore` record (P7: ledger is the proof). */
     };
     try {
-      await invoke("restore_op", { opId, channel: ch });
-      restored = new Set(restored).add(row.seq);
+      // restore_op resolves with { restored: string[], missing: string[],
+      // collided: string[] } (demo mode: { ok, restored: number }).
+      const res = (await invoke("restore_op", { opId, channel: ch })) as {
+        restored: unknown;
+      };
+      const restoredCount =
+        typeof res.restored === "number" ? res.restored : Array.isArray(res.restored) ? res.restored.length : 0;
+      // Op-scoped: one click restores EVERY apply row of the op. A no-op click
+      // (nothing left in quarantine — already purged/missing) marks NONE.
+      if (restoredCount > 0) {
+        const next = new Set(restored);
+        for (const r of recs) {
+          if (r.kind === "apply" && isApply(r)) {
+            const rRec = r.rec as ApplyRec;
+            if (opIdOf(rRec.quarantine_path) === opId) next.add(r.seq);
+          }
+        }
+        restored = next;
+      }
       await refresh();
     } catch (e) {
       restoreErr = String(e);
@@ -204,8 +261,8 @@
           {#each g.rows as row (row.seq)}
             {@const rec = row.rec}
             {#if row.kind === "apply" && isApply(row)}
+              {@const state = rowState(row)}
               {@const rem = graceRemaining(rec.undo.grace_expires_at)}
-              {@const live = rem.h + rem.m > 0 && !restored.has(row.seq)}
               <div class="ledger-row">
                 <span class="l-id num">#{row.seq}</span>
                 <span class="l-kind k-apply">{t("ledger.kind_apply")}</span>
@@ -215,13 +272,20 @@
                   </div>
                   <div class="l-p2 mono">plan-{rec.plan_id} · {fmtTs(row.ts)}</div>
                 </div>
-                {#if live}
+                {#if state === "live"}
                   <span class="grace num">
                     {t("ledger.remaining")} {rem.h}h {rem.m}m
                   </span>
-                  <button disabled={restoring === String(row.seq)} onclick={() => restore(row)}>
+                  <button
+                    disabled={restoring !== null && restoring === opIdOf(rec.quarantine_path)}
+                    onclick={() => restore(row)}
+                  >
                     {t("ledger.restore")}
                   </button>
+                {:else if state === "expired"}
+                  <span class="l-state warn num">{t("ledger.pending")}</span>
+                {:else if state === "destroyed"}
+                  <span class="l-state dead num">{t("ledger.not_restorable")}</span>
                 {:else}
                   <span class="l-state ok num">{t("ledger.restored")}</span>
                 {/if}
@@ -421,6 +485,9 @@
   }
   .l-state.ok {
     color: var(--grade-pure);
+  }
+  .l-state.warn {
+    color: var(--grade-expensive);
   }
   .l-state.dead {
     color: var(--text-faint);
