@@ -14,7 +14,7 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use crossbeam_channel;
-use disk_janitor::execute::{self, ExecEvent};
+use disk_janitor::execute::{self, ExecEvent, KillPoint};
 use disk_janitor::ledger::{self, Kind};
 use disk_janitor::{Grade, PlanAction, PlanEntry, VolumeInfo, WalKind, path_hash};
 use tempfile::TempDir;
@@ -67,6 +67,7 @@ fn entry(cid: &str, path: PathBuf, bytes: u64) -> PlanEntry {
         grade: Grade::PureCache,
         action: PlanAction::Quarantine,
         evidence: vec![],
+        inode: None,
     }
 }
 
@@ -112,6 +113,99 @@ fn child_apply(home: &Path, vol: &Path, plan_id: &str) {
     panic!("child apply returned without hitting the kill point");
 }
 
+/// True when `dir` (or its probe file) is writable by us — the same probe
+/// `execute::quarantine_root_for_source` uses while walking for the
+/// SIP-fallback anchor.
+fn dir_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".janitor-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// The TOPMOST ancestor of `dir` that is on the same device and writable by
+/// us — the same rule `execute` uses to pick the SIP-fallback quarantine
+/// anchor (`quarantine_root_for_source`). Used by the child to pre-create the
+/// anchor exactly where apply will resolve it.
+fn topmost_writable_ancestor(dir: &Path) -> PathBuf {
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let dev = fs::metadata(&dir)
+        .map(|m| std::os::unix::fs::MetadataExt::dev(&m))
+        .unwrap();
+    let mut best = dir.clone();
+    let mut cur: Option<&Path> = Some(dir.as_path());
+    while let Some(p) = cur {
+        if let Ok(md) = fs::metadata(p) {
+            if std::os::unix::fs::MetadataExt::dev(&md) == dev && dir_writable(p) {
+                best = p.to_path_buf();
+            }
+        }
+        cur = p.parent();
+    }
+    best
+}
+
+/// Child-mode body for the SIP-fallback case (C1): the volume's MOUNT ROOT is
+/// locked read-only (SIP-style — the volume table still reports it writable),
+/// so apply's primary root `<mount>/.Trash-janitor` cannot be created and the
+/// quarantine lands at the fallback anchor: a DIFFERENT writable ancestor's
+/// `.Trash-janitor`, pre-created here like production leaves it. The kill is
+/// passed directly (KILL_AT="SipFallback" is a dispatch-only label this test
+/// owns; no other test shares the point), firing at AfterRenameBeforeResult —
+/// intent + landed rename, no WAL result, no home-ledger apply rec.
+///
+/// The anchor is `/private/tmp/.Trash-janitor` — the test's vol+home live in a
+/// tempdir under `/private/tmp`, whose topmost writable same-dev ancestor is
+/// `/private/tmp` itself (1777) — which is exactly the DOCUMENTED fallback
+/// anchor for `/tmp` sources (discover_quarantine_roots probe 3). It is
+/// private to this test: no other test's mount/home chain crosses it, so no
+/// WAL residue can leak into their recover() counts.
+fn child_apply_sip_fallback(home: &Path, vol: &Path, plan_id: &str) {
+    // Sources live in a writable subdir of the read-only mount root.
+    let sub = vol.join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join("data-a.bin"), vec![0xABu8; A_BYTES as usize]).unwrap();
+    fs::write(sub.join("data-b.bin"), vec![0xCDu8; B_BYTES as usize]).unwrap();
+    // Pre-create the fallback quarantine root at the topmost writable same-dev
+    // ancestor (production: ~/.Trash-janitor on the boot volume), clearing any
+    // residue a crashed parent run may have left behind (this anchor is only
+    // ever written by this test).
+    let anchor = topmost_writable_ancestor(vol);
+    let root = anchor.join(".Trash-janitor");
+    if root.exists() {
+        fs::remove_dir_all(&root).unwrap();
+    }
+    fs::create_dir_all(&root).unwrap();
+    // Lock the mount root read-only, exactly like SIP does to /.
+    let mut perms = fs::metadata(vol).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(vol, perms).unwrap();
+
+    let store = ledger::open(home).expect("child home ledger");
+    let mut ex = execute::open(
+        plan_id.to_string(),
+        vec![
+            entry("C-001", sub.join("data-a.bin"), A_BYTES),
+            entry("C-002", sub.join("data-b.bin"), B_BYTES),
+        ],
+        &[vol_info(vol)],
+        store,
+    )
+    .expect("child executor");
+    let (tx, _rx) = crossbeam_channel::unbounded::<ExecEvent>();
+    let _ = ex.apply(tx, Some(KillPoint::AfterRenameBeforeResult));
+    // Unreachable when the kill is honored — the kill fires inside apply.
+    panic!("child apply returned without hitting the kill point");
+}
+
 fn child_env_path(key: &str) -> PathBuf {
     PathBuf::from(std::env::var(key).expect(key))
 }
@@ -124,7 +218,9 @@ fn crash_dispatch(point: &str) -> bool {
         let home = child_env_path("CHILD_HOME");
         let vol = child_env_path("CHILD_VOL");
         let plan_id = std::env::var("CHILD_PLAN_ID").expect("CHILD_PLAN_ID");
-        if point == "MidPurge" {
+        if point == "SipFallback" {
+            child_apply_sip_fallback(&home, &vol, &plan_id);
+        } else if point == "MidPurge" {
             child_apply_then_purge(&home, &vol, &plan_id);
         } else {
             child_apply(&home, &vol, &plan_id);
@@ -564,4 +660,120 @@ fn crash_mid_batch_then_reapply_applies_only_missing() {
     let rr = execute::recover(&[vol_info(vol.path())]);
     assert_eq!(rr.dangling_intents.len(), 0);
     assert_eq!(rr.rolled_forward, 0);
+}
+
+/// Walk up from `dir` and return the single ancestor holding a wal-bearing
+/// `.Trash-janitor` — the fallback anchor the SIP-fallback child quarantined
+/// into. The anchor sits OUTSIDE every TempDir (topmost writable same-dev
+/// ancestor of the tempdir chain), so the test removes it explicitly.
+fn find_fallback_anchor(dir: &Path) -> PathBuf {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut cur = Some(dir);
+    while let Some(p) = cur {
+        let root = p.join(".Trash-janitor");
+        if root.join("wal.jsonl").exists() {
+            roots.push(root);
+        }
+        cur = p.parent();
+    }
+    assert_eq!(
+        roots.len(),
+        1,
+        "exactly one fallback anchor holds the WAL (got {roots:?})"
+    );
+    roots.into_iter().next().expect("asserted non-empty")
+}
+
+/// C1 SIP-fallback recovery: the volume's mount root is locked read-only
+/// (SIP-style, though the volume table reports it writable), so apply
+/// quarantines at the fallback anchor — a DIFFERENT writable ancestor's
+/// `.Trash-janitor` — and the crash between rename and ledger append leaves
+/// the WAL there with NO ledger rec referencing it. recover() must find the
+/// anchor through the parent-chain probes and roll the landed rename forward;
+/// restore() (same discovery) then brings the file back byte-identical.
+///
+/// vol+home live under a tempdir in `/private/tmp`, so the anchor resolves to
+/// the DOCUMENTED `/private/tmp/.Trash-janitor` fallback (1777 /tmp is the
+/// topmost writable same-dev ancestor) — private to this test's probe chains,
+/// so the WAL can never leak into another test's recover() counts.
+#[test]
+fn crash_sip_fallback_anchor_recovered() {
+    if crash_dispatch("SipFallback") {
+        return;
+    }
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let base = tempfile::Builder::new()
+        .tempdir_in("/private/tmp")
+        .expect("tempdir under /private/tmp");
+    let home = base.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let vol = base.path().join("vol");
+    fs::create_dir(&vol).unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", &home) };
+    let plan_id = "crash-sip";
+
+    let code = spawn_crash("SipFallback", &home, &vol, plan_id);
+    assert_eq!(code, Some(137), "child dies at the kill point");
+
+    // The mount root is read-only, so the PRIMARY root was never created; the
+    // WAL landed at exactly one fallback anchor above the mount.
+    assert!(
+        !vol.join(".Trash-janitor").exists(),
+        "primary root never created under the read-only mount"
+    );
+    let anchor = find_fallback_anchor(&vol);
+    assert_eq!(
+        anchor,
+        PathBuf::from("/private/tmp/.Trash-janitor"),
+        "the /tmp-source fallback anchor is where the quarantine lands"
+    );
+    assert!(
+        !vol.join("sub").join("data-a.bin").exists(),
+        "source moved before the crash"
+    );
+    let wal = wal_entries(&anchor.join("wal.jsonl"));
+    assert_eq!(wal.len(), 1, "intent synced, result lost in the crash");
+    assert_eq!(wal[0].kind, WalKind::Intent);
+    let op_id = wal[0].op_id.clone();
+    let qpath = anchor.join(&op_id).join("data-a.bin");
+    assert!(qpath.exists(), "rename landed at the fallback anchor");
+    assert_eq!(fs::read(&qpath).unwrap(), vec![0xABu8; A_BYTES as usize]);
+
+    // Recovery finds the anchor with NO ledger rec referencing it and rolls
+    // the landed rename forward.
+    let rr = execute::recover(&[vol_info(&vol)]);
+    assert!(rr.volumes_checked >= 1, "fallback anchor must be probed");
+    assert_eq!(
+        rr.rolled_forward, 1,
+        "crash-between-rename-and-ledger state reconciled"
+    );
+    assert_eq!(rr.dangling_intents.len(), 0);
+    let wal = wal_entries(&anchor.join("wal.jsonl"));
+    assert_eq!(wal.len(), 2, "intent + rolled-forward result");
+    assert_eq!(wal[1].kind, WalKind::Result);
+
+    // Restore shares the same discovery: the file comes back byte-identical.
+    let store = ledger::open(&home).unwrap();
+    let mut ex = execute::open(
+        plan_id.to_string(),
+        build_entries(&vol),
+        &[vol_info(&vol)],
+        store,
+    )
+    .unwrap();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rep = ex.restore(&op_id, tx).unwrap();
+    assert_eq!(rep.restored.len(), 1, "exactly the landed rename restored");
+    assert!(rep.missing.is_empty());
+    assert_eq!(
+        fs::read(vol.join("sub").join("data-a.bin")).unwrap(),
+        vec![0xABu8; A_BYTES as usize]
+    );
+
+    // Cleanup: the fallback anchor is OUTSIDE the tempdir base; restore the
+    // mount root's permissions for the TempDir drop.
+    fs::remove_dir_all(&anchor).unwrap();
+    let mut perms = fs::metadata(&vol).unwrap().permissions();
+    perms.set_readonly(false);
+    fs::set_permissions(&vol, perms).unwrap();
 }

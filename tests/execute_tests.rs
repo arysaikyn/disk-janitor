@@ -48,7 +48,15 @@ fn entry(cid: &str, path: PathBuf, bytes: u64) -> PlanEntry {
         grade: Grade::PureCache,
         action: PlanAction::Quarantine,
         evidence: vec![],
+        inode: None,
     }
+}
+
+/// Entry with an explicit (dev, ino) dedup key — as plan::build now emits.
+fn entry_inode(cid: &str, path: PathBuf, bytes: u64, inode: (u64, u64)) -> PlanEntry {
+    let mut e = entry(cid, path, bytes);
+    e.inode = Some(inode);
+    e
 }
 
 fn open_executor(plan_id: &str, entries: Vec<PlanEntry>, vol: &Path, home: &Path) -> Executor {
@@ -413,6 +421,79 @@ fn purge_gate_refuses_mismatch_and_exact_count_frees() {
     assert!(events.iter().any(|e| matches!(e, ExecEvent::Done)));
 }
 
+/// (c2) B1: a plan with a HARD-LINKED pair (same (dev,ino), both entries
+/// Quarantine) — plan::build dedups the total, so the displayed quarantine
+/// number counts the inode once. purge() must gate on that SAME deduped total
+/// (not Σ entries) and account freed bytes per inode, not per link: the second
+/// link's unlink frees 0. A legacy entry without an inode key (pre-field
+/// manifest) keeps its own Σ semantics.
+#[test]
+fn purge_hardlinked_pair_gates_on_deduped_total_and_frees_once() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    let f1 = vol.path().join("a.bin");
+    let f2 = vol.path().join("b.bin"); // hard link to the SAME inode
+    let f3 = vol.path().join("c.bin"); // legacy entry, no inode key
+    fs::write(&f1, vec![1u8; 100]).unwrap();
+    fs::hard_link(&f1, &f2).unwrap();
+    fs::write(&f3, vec![2u8; 50]).unwrap();
+    let md = fs::symlink_metadata(&f1).unwrap();
+    let inode = (
+        std::os::unix::fs::MetadataExt::dev(&md),
+        std::os::unix::fs::MetadataExt::ino(&md),
+    );
+    assert_eq!(std::os::unix::fs::MetadataExt::nlink(&md), 2);
+
+    let entries = vec![
+        entry_inode("C-001", f1.clone(), 100, inode),
+        entry_inode("C-002", f2.clone(), 100, inode), // second link
+        entry("C-003", f3.clone(), 50),               // inode: None (legacy)
+    ];
+    let mut ex = open_executor("plan-1", entries, vol.path(), home.path());
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    ex.apply(tx, None).unwrap();
+
+    // The plan displays the DEDUPED total (100 + 50 = 150). Typing Σ entries
+    // (250) must refuse — and the refusal must name the deduped total.
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let err = ex.purge(250, tx).unwrap_err();
+    assert!(
+        err.to_string().contains("150"),
+        "refusal names the deduped quarantine total: {err}"
+    );
+    let (records, _) = ledger::replay(&home.path().join("ledger.jsonl")).unwrap();
+    assert_eq!(records.iter().filter(|r| r.kind == Kind::Purge).count(), 0);
+
+    // Exact deduped total → both links' quarantine paths unlinked, but the
+    // inode's bytes freed ONCE (second link's unlink frees 0).
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rep = ex.purge(150, tx).unwrap();
+    assert_eq!(rep.freed_bytes, 150, "freed = inode once + legacy entry");
+    assert_eq!(rep.entries, 3, "all three quarantine paths unlinked");
+    assert!(!f1.exists());
+    assert!(!f2.exists());
+    assert!(!f3.exists());
+
+    let (records, _) = ledger::replay(&home.path().join("ledger.jsonl")).unwrap();
+    let purges: Vec<&LedgerRecord> = records
+        .iter()
+        .filter(|r| r.kind == Kind::Purge)
+        .map(|r| &r.rec)
+        .collect();
+    assert_eq!(purges.len(), 3);
+    let freed: u64 = purges
+        .iter()
+        .map(|p| match p {
+            LedgerRecord::Purge { bytes_freed, .. } => *bytes_freed,
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(freed, 150, "ledger bytes_freed sums to the deduped total");
+}
+
 /// (d) restore after apply: originals come back byte-identical, entries of
 /// other ops in the same WAL are untouched, ledger restore recs record the
 /// apply seq as `undoes`.
@@ -716,6 +797,128 @@ fn restore_collision_keeps_both() {
     );
 }
 
+/// C2: restore when the original PARENT dir was deleted since quarantine —
+/// without parent recreation the rename fails ENOENT and the file is stranded,
+/// misreported as a benign "missing" although the quarantine path is alive.
+/// Restore is the user's explicit undo: the parent chain is recreated (empty
+/// dirs only), the file returns byte-identical to the ORIGINAL path, and only
+/// a missing QUARANTINE path is reported missing.
+#[test]
+fn restore_recreates_deleted_original_parent() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    // Multi-level parent chain — the whole `deep/nested` subtree is deleted.
+    let f1 = vol.path().join("deep").join("nested").join("a.bin");
+    fs::create_dir_all(f1.parent().unwrap()).unwrap();
+    fs::write(&f1, vec![0xAu8; 100]).unwrap();
+    let mut ex1 = open_executor(
+        "plan-1",
+        vec![entry("C-001", f1.clone(), 100)],
+        vol.path(),
+        home.path(),
+    );
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let op1 = ex1.apply(tx, None).unwrap().op_id;
+    drop(ex1); // release the home flock
+    assert!(!f1.exists(), "quarantined");
+
+    // The user deleted the original parent subtree while the file sat in quarantine.
+    fs::remove_dir_all(vol.path().join("deep")).unwrap();
+
+    let mut ex2 = open_executor("plan-1", vec![], vol.path(), home.path());
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let rep = ex2.restore(&op1, tx.clone()).unwrap();
+    let events = drain(tx, rx);
+    drop(ex2);
+
+    assert_eq!(
+        rep.restored,
+        vec!["C-001".to_string()],
+        "quarantine path was alive — the entry restores"
+    );
+    assert!(
+        rep.missing.is_empty(),
+        "a deleted ORIGINAL PARENT is not a benign missing"
+    );
+    assert!(rep.collided.is_empty());
+    // The parent chain is recreated and the file lands at the ORIGINAL path.
+    assert_eq!(
+        fs::read(&f1).unwrap(),
+        vec![0xAu8; 100],
+        "byte-identical at the original path"
+    );
+    assert!(
+        !quarantine_root(vol.path()).join(&op1).exists(),
+        "op dir removed when empty"
+    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ExecEvent::EntryRestored { cid, to }
+            if cid == "C-001" && to == &f1.display().to_string()
+    )));
+}
+
+/// C1: a WAL at the SIP-fallback anchor — a writable ANCESTOR of the mount
+/// (production: `~/.Trash-janitor` on the boot volume), NOT the mount root —
+/// with NO ledger rec referencing it (crash between rename and ledger append)
+/// is still discovered by recover() through the parent-chain probes, and the
+/// landed rename rolls forward.
+#[test]
+fn recover_finds_wal_at_fallback_anchor_without_ledger_rec() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let base = TempDir::new().unwrap();
+    let home = base.path().join("home");
+    fs::create_dir(&home).unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", &home) };
+    let vol = base.path().join("vol");
+    fs::create_dir(&vol).unwrap();
+
+    // Simulate the crash state directly: intent recorded at
+    // <base>/.Trash-janitor (the fallback anchor — vol's writable parent),
+    // rename landed, result and home-ledger apply rec never written.
+    let root = base.path().join(".Trash-janitor");
+    let src = vol.join("a.bin");
+    fs::write(&src, vec![0xAu8; 100]).unwrap();
+    let op_dir = root.join("op-c1");
+    fs::create_dir_all(&op_dir).unwrap();
+    let qpath = op_dir.join("a.bin");
+    fs::rename(&src, &qpath).unwrap();
+    let mut store = ledger::open(&root).unwrap();
+    store
+        .wal_intent(&WalEntry {
+            op_id: "op-c1".into(),
+            kind: WalKind::Intent,
+            plan_id: "p1".into(),
+            entry: path_hash(&src),
+            from: Some(src.clone()),
+            to: Some(qpath.clone()),
+            bytes: 100,
+            undo_of: None,
+        })
+        .unwrap();
+    drop(store); // release the per-volume WAL flock
+    // The home ledger.jsonl does not exist — NO record references the root.
+
+    let rr = execute::recover(&[vol_info(&vol)]);
+    assert!(
+        rr.volumes_checked >= 1,
+        "the fallback anchor must be probed"
+    );
+    assert_eq!(
+        rr.rolled_forward, 1,
+        "landed rename at the fallback anchor rolled forward"
+    );
+    assert_eq!(rr.dangling_intents.len(), 0);
+    let wal = wal_entries(&root.join("wal.jsonl"));
+    assert_eq!(wal.len(), 2, "intent + rolled-forward result");
+    assert_eq!(wal[1].kind, WalKind::Result);
+    assert_eq!(wal[1].from, Some(src));
+    assert_eq!(wal[1].to, Some(qpath));
+}
+
 /// Zero-quarantine plan: apply succeeds with an empty report, creates NO
 /// quarantine root and NO per-volume WAL; purge(0) and restore are empty
 /// no-ops (SPEC §5.2 — nothing durable for a no-op batch).
@@ -756,6 +959,7 @@ fn apply_zero_quarantine_entries_is_noop() {
             reason: disk_janitor::Refusal::GradeNotAllowed,
         },
         evidence: vec![],
+        inode: None,
     };
     let pruned = PlanEntry {
         cid: "C-002".into(),
@@ -768,6 +972,7 @@ fn apply_zero_quarantine_entries_is_noop() {
             dry_run: String::new(),
         },
         evidence: vec![],
+        inode: None,
     };
     let mut ex2 = open_executor("plan-0b", vec![refused, pruned], vol.path(), home.path());
     let (tx, _rx) = crossbeam_channel::unbounded();

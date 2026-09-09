@@ -211,6 +211,9 @@ fn entry(c: &Candidate, action: PlanAction) -> PlanEntry {
         grade: c.grade,
         action,
         evidence: c.evidence.clone(),
+        // Dedup key for byte totals (see build's seen_inodes): purge() must be
+        // able to recompute the same deduped total from the manifest alone.
+        inode: Some((c.dev, c.ino)),
     }
 }
 

@@ -13,7 +13,7 @@
 
 pub mod macos;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::os::unix::fs::DirBuilderExt;
@@ -280,6 +280,64 @@ fn quarantine_root_for_source(src: &Path, vol: &VolumeInfo) -> PathBuf {
     }
     let anchor = best.unwrap_or_else(|| vol.mount.clone());
     anchor.join(macos::QUARANTINE_ROOT_NAME)
+}
+
+/// Quarantine-root discovery probe list (SPEC §5.1/§5.2 — DOCUMENTED):
+///
+/// 1. `<mount>/.Trash-janitor` — the standard per-volume primary root;
+/// 2. canonicalized `<mount>/.Trash-janitor` — `/tmp` and `/private/tmp` are
+///    one directory with two spellings, so both must reconcile once;
+/// 3. `<mount>/private/tmp/.Trash-janitor` — the SIP-fallback anchor for
+///    `/tmp` sources: the topmost WRITABLE same-dev ancestor of a
+///    `/private/tmp/…` source is `/private/tmp` itself (1777);
+/// 4. `<ancestor>/.Trash-janitor` for EVERY direct ancestor of the home
+///    ledger dir and of each candidate root from 1-3 plus `extra` — this
+///    covers the boot-volume anchor `~/.Trash-janitor` (topmost writable
+///    same-dev ancestor of home-dir sources) and any deeper anchor, even when
+///    a crash between rename and ledger append left NO record referencing it.
+///
+/// `extra` = roots derived from ledger records (each apply rec's quarantine
+/// path's grandparent). "Keep it cheap": a candidate counts only when
+/// `wal.jsonl` or `ledger.jsonl` exists inside it (existence probe, never a
+/// directory walk) — the caller re-checks before opening. Results are deduped
+/// by canonical path so the two spellings reconcile exactly once.
+fn discover_quarantine_roots(
+    vols: &[VolumeInfo],
+    extra: impl Iterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = vols.iter().map(quarantine_root_for).collect();
+    roots.extend(extra);
+    // Chains walked in probe 4: every volume mount, plus the home ledger dir.
+    let mut chains: Vec<PathBuf> = vols.iter().map(|v| v.mount.clone()).collect();
+    for vol in vols {
+        if let Ok(canonical) = vol.mount.canonicalize() {
+            roots.push(canonical.join(macos::QUARANTINE_ROOT_NAME));
+            chains.push(canonical);
+        }
+        roots.push(
+            vol.mount
+                .join("private/tmp")
+                .join(macos::QUARANTINE_ROOT_NAME),
+        );
+    }
+    chains.push(home_ledger_dir());
+    chains.extend(roots.iter().cloned());
+    for anchor in &chains {
+        let mut cur = Some(anchor.as_path());
+        while let Some(p) = cur {
+            roots.push(p.join(macos::QUARANTINE_ROOT_NAME));
+            cur = p.parent();
+        }
+    }
+    // Dedupe by CANONICAL path — /tmp/x and /private/tmp/x are the same dir
+    // with two spellings; each must count and reconcile exactly once.
+    let mut canon: Vec<PathBuf> = roots
+        .iter()
+        .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
+        .collect();
+    canon.sort();
+    canon.dedup();
+    canon
 }
 
 fn is_dir_writable(dir: &Path) -> bool {
@@ -638,15 +696,22 @@ impl Executor {
     }
 
     /// Purge the plan's quarantined entries. `typed_bytes` MUST equal the plan's
-    /// quarantine total (sum of `alloc_bytes` over quarantine entries) — any
+    /// quarantine total — the DEDUPED per-(dev,ino) sum over quarantine entries,
+    /// mirroring plan::build's `seen_inodes` rule exactly, i.e. the number the
+    /// plan displays (B1: a hardlinked pair counts once, not twice). Any
     /// mismatch refuses with zero side effects (P4, SPEC §5.3). Purge runs to
     /// completion (no cancel checks, D-15): per entry recursive unlink, WAL
     /// result (`from: None` — never restorable), home-ledger `purge` rec.
     pub fn purge(&mut self, typed_bytes: u64, tx: Sender<ExecEvent>) -> Result<PurgeReport> {
+        // Same (dev,ino) rule as plan::build (SPEC §3.3): an inode can only be
+        // reclaimed once. Entries without an inode key (pre-field manifests)
+        // are each their own group — legacy Σ semantics, never collapsed.
+        let mut seen_inodes: HashSet<(u64, u64)> = HashSet::new();
         let expected: u64 = self
             .entries
             .iter()
             .filter(|e| matches!(e.action, PlanAction::Quarantine))
+            .filter(|e| e.inode.is_none_or(|ino| seen_inodes.insert(ino)))
             .map(|e| e.alloc_bytes)
             .sum();
         if typed_bytes != expected {
@@ -666,6 +731,10 @@ impl Executor {
                 records.iter().filter(|r| r.kind == Kind::Apply).collect();
             let last_idx = apply_recs.len().saturating_sub(1);
             let mut purged = 0u32;
+            // FRESH set (the gate's set is spent above): ledger order may
+            // differ from plan order, and the first link seen here must free
+            // the inode's bytes.
+            let mut seen_inodes: HashSet<(u64, u64)> = HashSet::new();
             for (idx, rec) in apply_recs.iter().enumerate() {
                 let apply = match &rec.rec {
                     LedgerRecord::Apply {
@@ -688,7 +757,14 @@ impl Executor {
                 if !qpath.exists() {
                     continue; // already purged/restored — idempotent
                 }
-                let freed = entry.alloc_bytes;
+                // Honest accounting (B1): one inode frees its bytes exactly
+                // once — the second hardlink's unlink frees 0. The dedup set
+                // mirrors plan::build / the gate above (None = own group).
+                let freed = if entry.inode.is_none_or(|ino| seen_inodes.insert(ino)) {
+                    entry.alloc_bytes
+                } else {
+                    0
+                };
                 macos::remove_all(&qpath).with_context(|| format!("unlink {}", qpath.display()))?;
                 report.freed_bytes += freed;
                 report.entries += 1;
@@ -753,8 +829,10 @@ impl Executor {
 
     /// Restore one op: replay the per-volume WALs, reverse the rename for every
     /// intent/result pair of `op_id` whose quarantine still exists (ENOENT =
-    /// already purged → reported missing, benign). Appends a home-ledger
-    /// `restore` rec per entry with `undoes` = the apply record's seq.
+    /// already purged → reported missing, benign). A deleted ORIGINAL parent
+    /// dir is recreated (restore is the user's explicit undo; only a missing
+    /// QUARANTINE path is benign). Appends a home-ledger `restore` rec per
+    /// entry with `undoes` = the apply record's seq.
     pub fn restore(&mut self, op_id: &str, tx: Sender<ExecEvent>) -> Result<RestoreReport> {
         let mut report = RestoreReport::default();
         let home = home_ledger_dir();
@@ -779,23 +857,18 @@ impl Executor {
             }
         }
 
-        // Quarantine roots discovered from the LEDGER's apply records (source of
-        // truth for where entries actually live), not from volume mounts — the
-        // apply path may anchor on a same-dev writable ancestor (e.g.
-        // /private/tmp) that is NOT any vol.mount string.
-        let mut roots: Vec<PathBuf> = apply_by_qpath
-            .keys()
-            .filter_map(|q| q.parent().and_then(|p| p.parent()).map(|r| r.to_path_buf()))
-            .collect();
-        roots.sort();
-        roots.dedup();
-        // Also probe the standard per-volume roots (covers a crashed apply whose
-        // ledger rec never landed).
-        for vol in &self.vols {
-            roots.push(quarantine_root_for(vol));
-        }
-        roots.sort();
-        roots.dedup();
+        // Root discovery: ledger apply recs are the source of truth for where
+        // entries actually live (the apply path may anchor on a same-dev
+        // writable ancestor, e.g. /private/tmp, that is NOT any vol.mount
+        // string), but a crashed apply whose ledger rec never landed is only
+        // reachable through the fallback-anchor probe list — see
+        // `discover_quarantine_roots`.
+        let roots = discover_quarantine_roots(
+            &self.vols,
+            apply_by_qpath
+                .keys()
+                .filter_map(|q| q.parent().and_then(|p| p.parent()).map(|r| r.to_path_buf())),
+        );
         for root in &roots {
             let root: &PathBuf = root;
             let wal_path = root.join("wal.jsonl");
@@ -835,6 +908,16 @@ impl Executor {
                 if !qpath.exists() {
                     report.missing.push(cid);
                     continue;
+                }
+                // C2: the original PARENT dir may have been deleted since the
+                // quarantine — restore is the user's explicit undo, so recreate
+                // the chain (an empty dir, never the file). Without this the
+                // rename fails ENOENT and the file is stranded, misreported as
+                // benign "missing" although the quarantine path is alive.
+                if let Some(parent) = orig.parent() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("recreate original parent {}", parent.display())
+                    })?;
                 }
                 // D-26: default restore NEVER clobbers — an occupied original
                 // path (user recreated the file) gets `original-<n>` instead.
@@ -887,8 +970,9 @@ impl Executor {
     }
 }
 
-/// Crash recovery (SPEC §5.2): per volume, replay `<mnt>/.Trash-janitor/wal.jsonl`
-/// and reconcile committed intents against FS state — quarantine target exists ⇒
+/// Crash recovery (SPEC §5.2): per volume, replay the per-volume WALs found at
+/// every quarantine root on the `discover_quarantine_roots` probe list and
+/// reconcile committed intents against FS state — quarantine target exists ⇒
 /// roll forward (append the WAL result); intent without result and no target ⇒
 /// drop tail (report, never touch user data). Also surfaces home-ledger apply
 /// recs whose grace window has expired as purge candidates (never auto-purged).
@@ -953,37 +1037,24 @@ pub fn recover(vols: &[VolumeInfo]) -> RecoveryReport {
     }
 
     // Per-volume WAL reconciliation.
-    // Root discovery: standard per-volume mounts PLUS same-dev writable anchors
-    // recorded in ledger quarantine paths (the boot-Data /private/tmp case).
-    let mut roots: Vec<PathBuf> = vols.iter().map(quarantine_root_for).collect();
-    for rec in &apply_recs {
-        if let LedgerRecord::Apply {
-            quarantine_path, ..
-        } = &rec.rec
-            && let Some(root) = quarantine_path.parent().and_then(|p| p.parent())
-        {
-            roots.push(root.to_path_buf());
-        }
-    }
-    // Crash BEFORE any ledger rec: also probe the writable same-dev ancestor of
-    // common fixture/tmp roots by scanning the WAL-bearing dirs recorded nowhere.
-    // The honest fix: scan all mounts' primary root plus their canonicalized
-    // private paths. Probe: for each vol mount, also try its /private variant.
-    for vol in vols {
-        let m = &vol.mount;
-        if let Ok(canonical) = m.canonicalize() {
-            roots.push(canonical.join(macos::QUARANTINE_ROOT_NAME));
-        }
-    }
-    // Dedupe by CANONICAL path — /tmp/x and /private/tmp/x are the same dir with
-    // two spellings; each must count and reconcile exactly once.
-    let mut canon: Vec<PathBuf> = roots
-        .iter()
-        .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
-        .collect();
-    canon.sort();
-    canon.dedup();
-    let roots = canon;
+    // Root discovery: ledger apply recs (same-dev writable anchors recorded in
+    // quarantine paths — the boot-Data /private/tmp case) PLUS the documented
+    // fallback-anchor probe list — see `discover_quarantine_roots`. A crash
+    // between rename and ledger append leaves a WAL at the SIP-fallback anchor
+    // (~/.Trash-janitor, /private/tmp/.Trash-janitor) with NO record anywhere
+    // referencing it; the parent-chain probes surface it anyway.
+    let roots = discover_quarantine_roots(
+        vols,
+        apply_recs.iter().filter_map(|rec| match &rec.rec {
+            LedgerRecord::Apply {
+                quarantine_path, ..
+            } => quarantine_path
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|r| r.to_path_buf()),
+            _ => None,
+        }),
+    );
     for root in &roots {
         let wal_path = root.join("wal.jsonl");
         if !wal_path.exists() && !root.join("ledger.jsonl").exists() {
