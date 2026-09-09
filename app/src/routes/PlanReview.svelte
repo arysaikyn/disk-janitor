@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { t, getLocale, onLocaleChange } from "../lib/i18n";
   import { invoke, channel } from "../lib/ipc";
+  import MetricLine from "../lib/MetricLine.svelte";
+  import Row from "../lib/Row.svelte";
+  import PressButton from "../lib/PressButton.svelte";
 
   interface Props {
     onpurge: (planId: string, bytes: number) => void;
@@ -101,23 +104,54 @@
     planId && planId.startsWith("plan-") ? planId : planId ? `plan-${planId}` : null,
   );
 
-  const pruneCmds = $derived(
-    plan
-      ? plan.entries
-          .filter((e) => e.action.type === "prune_command")
-          .map((e) => (e.action as { cmd: string }).cmd)
-      : [],
-  );
-  // Plain function: called from the template, so reactive reads of `plan` are
-  // tracked at render time (Svelte 5).
-  function refuseByReason(): string[] {
-    const counts = new Map<string, number>();
-    for (const e of plan?.entries ?? []) {
-      if (e.action.type !== "refuse") continue;
-      const reason = (e.action as { reason: string }).reason;
-      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  // Entries grouped by action — quarantine first, then prune commands, then
+  // refusals; `i` is the global row index so the stagger flows down the page.
+  type EntryKind = "quarantine" | "prune" | "refuse";
+  interface DisplayEntry {
+    e: PlanEntry;
+    i: number;
+    kind: EntryKind;
+    cmd?: string;
+    reason?: string;
+  }
+  function groupEntries(p: PlanManifest): DisplayEntry[] {
+    const q: DisplayEntry[] = [];
+    const pr: DisplayEntry[] = [];
+    const r: DisplayEntry[] = [];
+    for (const e of p.entries) {
+      const a = e.action as { type: string; cmd?: string; reason?: string };
+      if (a.type === "prune_command") pr.push({ e, kind: "prune", cmd: a.cmd });
+      else if (a.type === "refuse") r.push({ e, kind: "refuse", reason: a.reason });
+      else q.push({ e, kind: "quarantine" });
     }
-    return [...counts.entries()].map(([reason, n]) => `${n} × ${reason}`);
+    return [...q, ...pr, ...r].map((d, i) => ({ ...d, i }));
+  }
+  const displayEntries = $derived(plan ? groupEntries(plan) : []);
+
+  // Row's grade prop takes the CSS var name minus the -- prefix (§3.1 dot map:
+  // pure green, rebuild teal, redl blue, expensive amber, hands red).
+  function gradeVar(grade: string): string {
+    switch (grade) {
+      case "pure_cache":
+        return "grade-pure";
+      case "rebuildable_from_source":
+        return "grade-rebuild";
+      case "redownloadable":
+        return "grade-redl";
+      case "expensive":
+        return "grade-expensive";
+      default:
+        return "grade-hands";
+    }
+  }
+
+  // Refusal reason → localized label (same normalization as Review.refuseReason:
+  // serde snake_case and demo PascalCase both resolve to review.refuse_*).
+  function refuseLabel(reason: string): string {
+    const norm = reason.toLowerCase().replace(/[_\s-]/g, "");
+    const k = `review.refuse_${norm}`;
+    const label = t(k);
+    return label === k ? reason : label;
   }
 
   async function apply() {
@@ -168,9 +202,11 @@
   {#if displayId}<span class="sub mono">{displayId}</span>{/if}
   <span class="spacer"></span>
   {#if plan}
-    <button onclick={() => (jsonOpen = !jsonOpen)}>
-      {jsonOpen ? t("plan.hide_json") : t("plan.view_json")}
-    </button>
+    <PressButton
+      kind="ghost"
+      label={jsonOpen ? t("plan.hide_json") : t("plan.view_json")}
+      onpress={() => (jsonOpen = !jsonOpen)}
+    />
   {/if}
 </div>
 
@@ -186,42 +222,29 @@
       </div>
     </div>
   {:else if plan}
-    <div class="plan-card">
-      <div class="plan-row">
-        <span class="qty num">{plan.totals.quarantine_entries} ×</span>
-        <span class="what">{t("plan.quarantine")}</span>
-        <span class="size num">{fmtBytes(plan.totals.quarantine_bytes)}</span>
-        <span class="note num">{t("plan.freed_zero")}</span>
-      </div>
+    <!-- manifest header: MetricLine group, no box (MetricLine draws no chrome) -->
+    <div class="metrics">
+      <MetricLine
+        label={t("plan.quarantine")}
+        value={fmtBytes(plan.totals.quarantine_bytes)}
+        sub={`${plan.totals.quarantine_entries} ${t("unit.entries")}`}
+      />
       {#if plan.totals.prune_cmds > 0}
-        <div class="plan-row">
-          <span class="qty num">{plan.totals.prune_cmds} ×</span>
-          <span class="what">
-            {t("plan.prune")}
-            <span class="cmd">{pruneCmds.join(" · ")}</span>
-          </span>
-          <span class="size num">{fmtBytes(plan.totals.prune_bytes)}</span>
-        </div>
+        <MetricLine label={t("plan.prune")} value={fmtBytes(plan.totals.prune_bytes)} />
       {/if}
       {#if plan.totals.refused > 0}
-        <div class="plan-row">
-          <span class="qty num">{plan.totals.refused} ×</span>
-          <span class="what">{t("plan.refused")}</span>
-          <span class="size num">—</span>
-          <span class="note mono">{refuseByReason().join(" · ")}</span>
-        </div>
+        <MetricLine
+          label={t("plan.refused")}
+          value={String(plan.totals.refused)}
+          sub={t("unit.entries")}
+        />
       {/if}
-      <div class="plan-total">
-        <span class="t num">
-          {fmtBytes(plan.totals.quarantine_bytes + plan.totals.prune_bytes)}
-          <span class="dedup">{t("plan.dedup")}</span>
-        </span>
-        <span class="grace">{t("plan.grace")}</span>
-        {#if plan.totals.snapshot_caveat}
-          <span class="snap">{t("plan.snapshot_note")}: {plan.totals.snapshot_caveat}</span>
-        {/if}
-      </div>
     </div>
+    <!-- the undo promise, made numeric (SPEC §4.3): nothing is destroyed here -->
+    <div class="promise num">0 {t("dash.destroyed")} · {t("plan.grace")}</div>
+    {#if plan.totals.snapshot_caveat}
+      <div class="snap">{t("plan.snapshot_note")}: {plan.totals.snapshot_caveat}</div>
+    {/if}
 
     {#if applied}
       <div class="applied-note num">
@@ -229,20 +252,52 @@
       </div>
     {/if}
 
+    <!-- entries: grouped by action — quarantine (grade dot), prune commands
+         (mono), refusals (muted, red dot, localized reason) -->
+    {#if displayEntries.length > 0}
+      <ul class="rows">
+        {#each displayEntries as d (d.e.cid)}
+          {#if d.kind === "quarantine"}
+            <Row grade={gradeVar(d.e.grade)} index={d.i}>
+              <span class="row-main">
+                <span class="e-path mono">{d.e.path}</span>
+                <span class="e-bytes num">{fmtBytes(d.e.alloc_bytes)}</span>
+              </span>
+            </Row>
+          {:else if d.kind === "prune"}
+            <Row index={d.i}>
+              <span class="row-main">
+                <span class="e-cmd mono">{d.cmd}</span>
+                <span class="e-bytes num">{fmtBytes(d.e.alloc_bytes)}</span>
+              </span>
+            </Row>
+          {:else}
+            <Row grade="grade-hands" index={d.i}>
+              <span class="row-main muted">
+                <span class="e-reason">{refuseLabel(d.reason ?? t("review.refuse_other"))}</span>
+                <span class="e-path mono">{d.e.path}</span>
+                <span class="e-bytes num">{fmtBytes(d.e.alloc_bytes)}</span>
+              </span>
+            </Row>
+          {/if}
+        {/each}
+      </ul>
+    {/if}
+
     {#if rows.length > 0}
       <div class="act-list">
-        <div class="act-head">
-          <span>{t("plan.actions")}</span>
-          <span class="spacer"></span>
-          <!-- the reversibility claim, made numeric: apply frees 0 bytes (SPEC §4.3) -->
-          <span class="freed num">{t("plan.freed_zero")}</span>
-        </div>
-        {#each rows as row (row.key)}
-          <div class="act-row {row.kind}">
-            <span class="mark">{row.kind === "ok" ? "✓" : "✕"}</span>
-            <span class="path">{row.text}</span>
-          </div>
-        {/each}
+        <div class="act-head">{t("plan.actions")}</div>
+        <ul class="act-rows">
+          {#each rows as row, i (row.key)}
+            <li
+              class="act-row {row.kind}"
+              style={`--stagger: ${Math.min(i, 8) * 40}ms`}
+            >
+              <span class="mark">{row.kind === "ok" ? "✓" : "✕"}</span>
+              <span class="path mono">{row.text}</span>
+            </li>
+          {/each}
+        </ul>
       </div>
     {/if}
 
@@ -251,16 +306,24 @@
     {/if}
 
     <div class="plan-foot">
-      <button class="primary" disabled={applying || !planId} onclick={apply}>
-        {t("plan.apply")}
-      </button>
+      <PressButton
+        kind="ghost"
+        label={t("plan.apply")}
+        disabled={applying || !planId}
+        onpress={apply}
+      />
       <span class="hint-note">{t("plan.apply_hint")}</span>
-      <span class="spacer"></span>
       <!-- purge only ever appears behind an applied quarantine (SPEC §3.5/§4.2) -->
-      <button disabled={!applied || applying} onclick={() => applied && onpurge(planId!, applied.quarantined_bytes)}>
-        {t("plan.purge")}
-      </button>
+      <PressButton
+        kind="primary"
+        label={t("plan.purge")}
+        disabled={!applied || applying}
+        onpress={() => applied && onpurge(planId!, applied.quarantined_bytes)}
+      />
       <span class="hint-note">{t("plan.purge_hint")}</span>
+      <span class="spacer"></span>
+      <!-- the reversibility claim, made numeric: apply frees 0 bytes (SPEC §4.3) -->
+      <span class="freed-num num">{t("plan.freed_zero")}</span>
     </div>
   {/if}
 </div>
@@ -281,7 +344,7 @@
   }
   .sub {
     font-size: 12px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
   .spacer {
     flex: 1;
@@ -292,82 +355,26 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    flex: 1;
+    min-height: 0;
   }
 
-  .plan-card {
-    border: 1px solid var(--hairline);
-    border-radius: 14px;
-    background: var(--bg-raised);
-    overflow: hidden;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
-  }
-  .plan-row {
+  /* manifest header — metric group, no box; hierarchy from spacing alone */
+  .metrics {
     display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 13px 18px;
-    border-bottom: 1px solid var(--hairline);
-  }
-  .plan-row:last-child {
-    border-bottom: none;
-  }
-  .plan-row .qty {
-    font-family: var(--mono);
-    font-size: 13px;
-    font-weight: 600;
-    width: 72px;
-    flex-shrink: 0;
-  }
-  .plan-row .what {
-    flex: 1;
-    font-size: 13px;
-  }
-  .plan-row .what .cmd {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--text-faint);
-  }
-  .plan-row .size {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--text-dim);
-    flex-shrink: 0;
-  }
-  .plan-row .note {
-    font-size: 11px;
-    color: var(--text-faint);
-    flex-shrink: 0;
-    max-width: 40%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .plan-total {
-    display: flex;
+    gap: 32px;
     align-items: baseline;
-    gap: 20px;
-    padding: 13px 18px;
-    background: #0a0f16;
   }
-  .plan-total .t {
-    font-size: 15px;
-    font-weight: 650;
-  }
-  .plan-total .dedup {
-    font-size: 11px;
-    color: var(--text-faint);
-    margin-left: 6px;
-  }
-  .plan-total .grace {
+
+  /* the undo promise, made numeric (same voice as Review's promise line) */
+  .promise {
     font-size: 12px;
-    color: var(--text-faint);
+    color: var(--mist);
   }
-  .plan-total .snap {
+
+  .snap {
     font-size: 11px;
     color: var(--grade-expensive);
-    margin-left: auto;
-    max-width: 45%;
-    text-align: right;
   }
 
   .applied-note {
@@ -375,43 +382,100 @@
     color: var(--accent);
   }
 
-  /* live apply rows (ExecProgress stream) */
-  .act-list {
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: var(--bg-raised);
-    overflow: hidden;
+  /* row lists — hairline separators only, no boxes (Row ships its own
+     per-row top hairline; first row exempted via :first-child) */
+  .rows {
+    display: flex;
+    flex-direction: column;
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
-  .act-head {
+
+  .row-main {
     display: flex;
     align-items: center;
-    gap: 18px;
-    padding: 10px 16px;
-    background: #0a0f16;
-    border-bottom: 1px solid var(--hairline);
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .act-head .spacer {
+    gap: 12px;
     flex: 1;
+    min-width: 0;
   }
-  .act-head .freed {
-    color: var(--accent);
+  .e-path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .e-cmd {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text);
+  }
+  .e-bytes {
+    font-size: 12px;
+    color: var(--mist);
+    flex-shrink: 0;
+  }
+  .e-reason {
+    font-size: 11px;
+    color: var(--mist);
+    flex-shrink: 0;
+    max-width: 38%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* refusals: whole row muted — the red dot carries the refusal color */
+  .row-main.muted .e-path,
+  .row-main.muted .e-bytes {
+    color: var(--mist);
+  }
+
+  /* live apply stream (ExecProgress) — unboxed, hairline-separated, staggered */
+  .act-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .act-head {
+    font-size: 13px;
     font-weight: 600;
+    padding: 6px 2px 0;
+  }
+  .act-rows {
+    display: flex;
+    flex-direction: column;
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
   .act-row {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 9px 16px;
-    border-bottom: 1px solid var(--hairline);
+    padding: 8px 2px;
+    border-top: 1px solid var(--hairline);
     font-size: 12px;
+    transition: opacity var(--t-med) var(--ease) var(--stagger, 0ms);
   }
-  .act-row:last-child {
-    border-bottom: none;
+  .act-row:first-child {
+    border-top: none;
+  }
+  /* entry: fade in (transform kept free) */
+  @starting-style {
+    .act-row {
+      opacity: 0;
+    }
   }
   .act-row .mark {
     flex-shrink: 0;
+    font-size: 11px;
   }
   .act-row.ok .mark {
     color: var(--grade-pure);
@@ -421,22 +485,21 @@
   }
   .act-row .path {
     flex: 1;
-    font-family: var(--mono);
     font-size: 11px;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-dim);
+    color: var(--mist);
   }
 
   .json-view {
     font-family: var(--mono);
     font-size: 10px;
-    color: var(--text-dim);
-    background: #0a0f16;
+    color: var(--mist);
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 10px;
+    border-radius: var(--r-md);
     padding: 12px 14px;
     max-height: 40vh;
     overflow: auto;
@@ -448,10 +511,17 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    padding-top: 4px;
   }
   .hint-note {
     font-size: 11px;
     color: var(--text-faint);
+  }
+  /* live freed counter — styled like a MetricLine sub, tabular-nums */
+  .freed-num {
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
   }
 
   /* P1 refusal banner */
@@ -460,10 +530,9 @@
     gap: 12px;
     align-items: flex-start;
     border: 1px solid var(--hairline);
-    border-left: 2px solid var(--grade-hands);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 12px 14px;
-    background: var(--bg-raised);
+    background: var(--surface);
     font-size: 12px;
   }
   .rdot {
@@ -479,11 +548,18 @@
     margin-bottom: 2px;
   }
   .rt-body {
-    color: var(--text-dim);
+    color: var(--mist);
     margin-bottom: 4px;
     word-break: break-all;
   }
   .mono {
     font-family: var(--mono);
+  }
+
+  /* reduced motion: entry stagger collapses with the transition */
+  @media (prefers-reduced-motion: reduce) {
+    .act-row {
+      transition-delay: 0ms !important;
+    }
   }
 </style>

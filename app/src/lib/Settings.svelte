@@ -1,14 +1,43 @@
 <script lang="ts">
   import { t, getLocale, setLocale, onLocaleChange } from "./i18n";
+  import PressButton from "./PressButton.svelte";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let {
+    onclose,
+    onMinBytes,
+  }: {
+    onclose: () => void;
+    /** Live 最小候选大小 hook — fires on change with the byte value (50/100/500). */
+    onMinBytes?: (bytes: number) => void;
+  } = $props();
 
   let locale = $state(getLocale());
   $effect(() => onLocaleChange(() => (locale = getLocale())));
 
   // Local-only state (thresholds live in config.toml, SPEC Part C §3.8).
-  let minBytes = $state<"50" | "100" | "500">("50");
+  let minBytes = $state<"50" | "100" | "500">("100");
   let theme = $state<"system" | "light" | "dark">("system");
+
+  // Exit runs 20% faster than enter (220ms × 0.8 ≈ 180ms): flip the transform,
+  // let the transition finish, then let onclose unmount the sheet.
+  let closing = $state(false);
+  function requestClose() {
+    if (closing) return;
+    closing = true;
+    setTimeout(onclose, 180);
+  }
+
+  const MIN_OPTS: Array<"50" | "100" | "500"> = ["50", "100", "500"];
+  const THEMES: Array<{ key: "system" | "light" | "dark"; labelKey: string }> = [
+    { key: "system", labelKey: "settings.followsys" },
+    { key: "light", labelKey: "settings.light" },
+    { key: "dark", labelKey: "settings.dark" },
+  ];
+
+  function setMin(v: "50" | "100" | "500") {
+    minBytes = v;
+    onMinBytes?.(Number(v));
+  }
 
   $effect(() => {
     const el = document.documentElement;
@@ -17,97 +46,94 @@
   });
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
+<svelte:window onkeydown={(e) => e.key === "Escape" && requestClose()} />
 
 {#key locale}
   <div
     class="overlay"
+    class:closing={closing}
     lang={locale}
     role="presentation"
     onclick={(e) => {
-      if (e.target === e.currentTarget) onclose();
+      if (e.target === e.currentTarget) requestClose();
     }}
   >
     <div class="sheet" role="dialog" aria-modal="true" aria-label={t("settings.title")}>
-    <header class="sheet-head hairline-b">
-      <h2>{t("settings.title")}</h2>
-      <button class="close" aria-label={t("common.close")} onclick={onclose}>✕</button>
-    </header>
+      <header class="sheet-head hairline-b">
+        <h2>{t("settings.title")}</h2>
+        <button class="close" aria-label={t("common.close")} onclick={requestClose}>✕</button>
+      </header>
 
-    <div class="body">
-      <section class="group">
-        <div class="g-label">{t("settings.scan")}</div>
-        <div class="field">
-          <label for="min-bytes">{t("settings.mincandidate")}</label>
-          <select id="min-bytes" bind:value={minBytes}>
-            <option value="50">{t("unit.mb")} 50</option>
-            <option value="100">100 {t("unit.mb")}</option>
-            <option value="500">500 {t("unit.mb")}</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="settings-roots">{t("settings.roots")}</label>
-          <input id="settings-roots" type="text" value="~/" disabled />
-          <span class="m4">{t("settings.m4")}</span>
-        </div>
-        <div class="field">
-          <label for="settings-ignores">{t("settings.ignores")}</label>
-          <input id="settings-ignores" type="text" value="node_modules, *.log" disabled />
-          <span class="m4">{t("settings.m4")}</span>
-        </div>
-      </section>
+      <div class="body">
+        <section class="group">
+          <h3 class="g-label">{t("settings.scan")}</h3>
 
-      <section class="group">
-        <div class="g-label">{t("settings.language")}</div>
-        <div class="radio-row">
-          <label>
-            <input type="radio" name="lang" checked={locale === "zh"} onchange={() => setLocale("zh")} />
-            {t("settings.zh")}
-          </label>
-          <label>
-            <input type="radio" name="lang" checked={locale === "en"} onchange={() => setLocale("en")} />
-            {t("settings.en")}
-          </label>
-        </div>
-      </section>
+          <div class="row">
+            <span class="row-label" id="min-bytes-label">{t("settings.mincandidate")}</span>
+            <div class="seg" role="group" aria-labelledby="min-bytes-label">
+              {#each MIN_OPTS as v (v)}
+                <span class="seg-tab" class:active={minBytes === v}>
+                  <PressButton kind="ghost" label={`${v} ${t("unit.mb")}`} onpress={() => setMin(v)} />
+                </span>
+              {/each}
+            </div>
+          </div>
 
-      <section class="group">
-        <div class="g-label">{t("settings.appearance")}</div>
-        <div class="radio-row">
-          <label>
-            <input type="radio" name="theme" checked={theme === "system"} onchange={() => (theme = "system")} />
-            {t("settings.followsys")}
-          </label>
-          <label>
-            <input type="radio" name="theme" checked={theme === "light"} onchange={() => (theme = "light")} />
-            {t("settings.light")}
-          </label>
-          <label>
-            <input type="radio" name="theme" checked={theme === "dark"} onchange={() => (theme = "dark")} />
-            {t("settings.dark")}
-          </label>
-        </div>
-      </section>
+          <div class="row">
+            <span class="row-label">{t("settings.roots")}</span>
+            <span class="row-value">~/</span>
+          </div>
 
-      <section class="group">
-        <div class="g-label">{t("settings.privacy")}</div>
-        <div class="privacy-note">{t("settings.privacy_note")}</div>
-        <div class="privacy-sub">{t("settings.privacy_sub")}</div>
-      </section>
+          <div class="row">
+            <span class="row-label">{t("settings.ignores")}</span>
+            <span class="row-value">node_modules, *.log</span>
+          </div>
 
-      <section class="group">
-        <div class="g-label">{t("settings.uninstall")}</div>
-        <div class="uninstall-row">
-          <button disabled>{t("settings.uninstall")}</button>
-          <span class="note">{t("settings.uninstall_note")}</span>
-        </div>
-      </section>
+          <div class="sub">{t("settings.m4_hint")}</div>
+        </section>
+
+        <section class="group">
+          <h3 class="g-label">{t("settings.language")}</h3>
+          <div class="control-row">
+            <div class="seg" role="group" aria-label={t("settings.language")}>
+              <span class="seg-tab" class:active={locale === "zh"}>
+                <PressButton kind="ghost" label={t("settings.zh")} onpress={() => setLocale("zh")} />
+              </span>
+              <span class="seg-tab" class:active={locale === "en"}>
+                <PressButton kind="ghost" label={t("settings.en")} onpress={() => setLocale("en")} />
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section class="group">
+          <h3 class="g-label">{t("settings.appearance")}</h3>
+          <div class="control-row">
+            <div class="seg" role="group" aria-label={t("settings.appearance")}>
+              {#each THEMES as opt (opt.key)}
+                <span class="seg-tab" class:active={theme === opt.key}>
+                  <PressButton kind="ghost" label={t(opt.labelKey)} onpress={() => (theme = opt.key)} />
+                </span>
+              {/each}
+            </div>
+          </div>
+        </section>
+
+        <section class="group">
+          <h3 class="g-label">{t("settings.privacy")}</h3>
+          <p class="privacy-note">{t("settings.privacy_note")}</p>
+          <p class="privacy-sub">{t("settings.privacy_sub")}</p>
+        </section>
+
+        <section class="group">
+          <h3 class="g-label">{t("settings.uninstall")}</h3>
+          <div class="uninstall">
+            <PressButton kind="danger" label={t("settings.uninstall_btn")} disabled />
+            <span class="sub">{t("settings.uninstall_note")}</span>
+          </div>
+        </section>
+      </div>
     </div>
-
-    <footer class="sheet-foot hairline-b">
-      <button onclick={onclose}>{t("settings.close")}</button>
-    </footer>
-  </div>
   </div>
 {/key}
 
@@ -119,16 +145,20 @@
     z-index: 60;
     display: flex;
     justify-content: flex-end;
+    transition: opacity var(--t-med) var(--ease);
+  }
+  .overlay.closing {
+    opacity: 0;
   }
   .sheet {
     width: 420px;
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--bg-raised);
-    border-left: 1px solid var(--hairline);
-    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.35);
-    animation: sheet-in 0.18s ease;
+    background: var(--surface);
+    border-radius: var(--r-lg) 0 0 var(--r-lg);
+    box-shadow: var(--shadow-3);
+    animation: sheet-in var(--t-med) var(--ease);
   }
   @keyframes sheet-in {
     from {
@@ -140,11 +170,19 @@
       opacity: 1;
     }
   }
+  .overlay.closing .sheet {
+    transform: translateX(24px);
+    opacity: 0;
+    transition:
+      transform 180ms var(--ease),
+      opacity 180ms var(--ease);
+  }
+
   .sheet-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px;
+    padding: 12px 20px;
   }
   .sheet-head h2 {
     font-size: 15px;
@@ -152,101 +190,113 @@
     letter-spacing: -0.1px;
   }
   .close {
-    border: none;
-    background: transparent;
-    color: var(--text-faint);
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-sm);
+    color: var(--mist);
     font-size: 13px;
-    padding: 4px 8px;
   }
   .close:hover {
+    background: var(--surface-lift);
     color: var(--text);
   }
+
   .body {
     flex: 1;
     overflow-y: auto;
   }
+
   .group {
-    padding: 14px 18px;
+    padding: 18px 20px;
     border-bottom: 1px solid var(--hairline);
   }
-  .g-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-faint);
-    margin-bottom: 10px;
+  .group:last-child {
+    border-bottom: none;
   }
-  .field {
+  .g-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--mist);
+    margin-bottom: 12px;
+  }
+
+  .row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-  .field label {
-    flex: 0 0 96px;
-    color: var(--text-dim);
-    font-size: 12px;
-  }
-  .field input,
-  .field select {
-    flex: 1;
-    min-width: 0;
-    background: var(--bg);
-    border: 1px solid var(--hairline);
-    border-radius: 7px;
-    padding: 6px 10px;
-    color: var(--text);
-    font-size: 12px;
-    font-family: var(--mono);
-  }
-  .field input:disabled {
-    opacity: 0.45;
-  }
-  .m4 {
-    flex: 0 0 auto;
-    font-size: 10px;
-    color: var(--text-faint);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    padding: 1px 5px;
-  }
-  .radio-row {
-    display: flex;
+    justify-content: space-between;
     gap: 16px;
+    min-height: 44px;
+  }
+  .row-label {
     font-size: 13px;
     color: var(--text);
   }
-  .radio-row label {
+  .row-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--mist);
+    font-variant-numeric: tabular-nums;
+  }
+  .control-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: flex-end;
+    min-height: 44px;
   }
-  input[type="radio"] {
-    accent-color: var(--accent);
+  .sub {
+    font-size: 12px;
+    color: var(--mist);
+    line-height: 1.5;
+    margin-top: 6px;
   }
+
+  /* segmented control — container owns the hairline ring; tabs are plain
+     PressButton-ghosts; active = teal text + 2px teal underline, no fill */
+  .seg {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 1px;
+    padding: 2px;
+    border-radius: var(--r-sm);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+  .seg :global(button.press) {
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: calc(var(--r-sm) - 2px);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .seg :global(button.press.ghost) {
+    box-shadow: none;
+  }
+  .seg-tab.active :global(button.press) {
+    color: var(--accent);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+  .seg-tab.active :global(button.press):hover {
+    background: transparent;
+  }
+
   .privacy-note {
     font-size: 13px;
     color: var(--text);
     line-height: 1.7;
   }
   .privacy-sub {
-    font-size: 11px;
-    color: var(--text-faint);
+    font-size: 12px;
+    color: var(--mist);
     margin-top: 2px;
-  }
-  .uninstall-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .note {
-    font-size: 11px;
-    color: var(--text-faint);
     line-height: 1.6;
   }
-  .sheet-foot {
-    padding: 14px 18px;
+
+  .uninstall {
     display: flex;
-    justify-content: flex-end;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 
   /* explicit light/dark override (app.css only handles system mode) */
