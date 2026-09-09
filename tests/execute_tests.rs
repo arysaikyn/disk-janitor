@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use crossbeam_channel::{Receiver, Sender};
 use disk_janitor::execute::{self, ExecEvent, Executor};
 use disk_janitor::ledger::{self, Kind, LedgerRecord};
-use disk_janitor::{Grade, PlanAction, PlanEntry, VolumeInfo, WalKind, path_hash};
+use disk_janitor::{Grade, PlanAction, PlanEntry, VolumeInfo, WalEntry, WalKind, path_hash};
 use tempfile::TempDir;
 
 /// UF_HIDDEN (macOS <sys/stat.h>) — execute::macos keeps its consts crate-private.
@@ -71,6 +71,24 @@ fn drain(tx: Sender<ExecEvent>, rx: Receiver<ExecEvent>) -> Vec<ExecEvent> {
 
 fn quarantine_root(vol: &Path) -> PathBuf {
     vol.join(".Trash-janitor")
+}
+
+/// Recursively find every `wal.jsonl` under `dir` (proves a no-op apply creates
+/// no per-volume WAL anywhere).
+fn collect_wal_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = fs::read_dir(dir) {
+        for ent in rd.flatten() {
+            let p = ent.path();
+            if p.file_name().is_some_and(|n| n == "wal.jsonl") {
+                out.push(p.clone());
+            }
+            if p.is_dir() {
+                out.extend(collect_wal_files(&p));
+            }
+        }
+    }
+    out
 }
 
 fn lstat_flags(p: &Path) -> u32 {
@@ -600,4 +618,493 @@ fn apply_refuses_flag_blocked_entry_others_proceed() {
     assert_eq!(rr.rolled_forward, 0);
 
     chflags(&f1, 0); // let TempDir cleanup succeed
+}
+
+/// D-26 restore collision: the original path is occupied (user recreated the
+/// file) — restore must NEVER clobber. Default is keep-both: quarantine content
+/// lands at `original-1` (then `-2` when that is occupied too), the collision
+/// is reported in RestoreReport.collided, and the ledger restore rec records
+/// the ACTUAL final path.
+#[test]
+fn restore_collision_keeps_both() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    // --- Level 1: original occupied -> restore to original-1. ---
+    let f1 = vol.path().join("a.bin");
+    fs::write(&f1, vec![0xAu8; 100]).unwrap();
+    let mut ex1 = open_executor(
+        "plan-1",
+        vec![entry("C-001", f1.clone(), 100)],
+        vol.path(),
+        home.path(),
+    );
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let op1 = ex1.apply(tx, None).unwrap().op_id;
+    drop(ex1); // release the home flock
+
+    // User recreated the original before restoring.
+    fs::write(&f1, b"user-recreated").unwrap();
+    let mut ex2 = open_executor("plan-1", vec![], vol.path(), home.path());
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let rep = ex2.restore(&op1, tx.clone()).unwrap();
+    let events = drain(tx, rx);
+    drop(ex2);
+
+    assert_eq!(rep.restored, vec!["C-001".to_string()]);
+    assert_eq!(
+        rep.collided,
+        vec!["C-001".to_string()],
+        "collision reported"
+    );
+    assert!(rep.missing.is_empty());
+    // The recreated file is untouched; the quarantined content lands at a.bin-1.
+    assert_eq!(fs::read(&f1).unwrap(), b"user-recreated");
+    assert_eq!(
+        fs::read(vol.path().join("a.bin-1")).unwrap(),
+        vec![0xAu8; 100]
+    );
+    // The op dir is removed when empty.
+    assert!(!quarantine_root(vol.path()).join(&op1).exists());
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ExecEvent::EntryRestored { cid, to }
+            if cid == "C-001" && to == &vol.path().join("a.bin-1").display().to_string()
+    )));
+    // The ledger restore rec records the ACTUAL target (a.bin-1), not the collision.
+    let (records, _) = ledger::replay(&home.path().join("ledger.jsonl")).unwrap();
+    let tos: Vec<PathBuf> = records
+        .iter()
+        .filter(|r| r.kind == Kind::Restore)
+        .filter_map(|r| match &r.rec {
+            LedgerRecord::Restore { to, .. } => Some(to.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tos, vec![vol.path().join("a.bin-1")]);
+
+    // --- Level 2: original AND original-1 occupied -> restore to original-2. ---
+    let f2 = vol.path().join("b.bin");
+    fs::write(&f2, vec![0xBu8; 200]).unwrap();
+    let mut ex3 = open_executor(
+        "plan-2",
+        vec![entry("C-002", f2.clone(), 200)],
+        vol.path(),
+        home.path(),
+    );
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let op2 = ex3.apply(tx, None).unwrap().op_id;
+    drop(ex3);
+
+    fs::write(&f2, b"recreated").unwrap();
+    fs::write(vol.path().join("b.bin-1"), b"also-recreated").unwrap();
+    let mut ex4 = open_executor("plan-2", vec![], vol.path(), home.path());
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rep2 = ex4.restore(&op2, tx).unwrap();
+    assert_eq!(rep2.restored, vec!["C-002".to_string()]);
+    assert_eq!(rep2.collided, vec!["C-002".to_string()]);
+    assert_eq!(fs::read(&f2).unwrap(), b"recreated", "user file untouched");
+    assert_eq!(
+        fs::read(vol.path().join("b.bin-1")).unwrap(),
+        b"also-recreated"
+    );
+    assert_eq!(
+        fs::read(vol.path().join("b.bin-2")).unwrap(),
+        vec![0xBu8; 200]
+    );
+}
+
+/// Zero-quarantine plan: apply succeeds with an empty report, creates NO
+/// quarantine root and NO per-volume WAL; purge(0) and restore are empty
+/// no-ops (SPEC §5.2 — nothing durable for a no-op batch).
+#[test]
+fn apply_zero_quarantine_entries_is_noop() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    let mut ex = open_executor("plan-0", vec![], vol.path(), home.path());
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let rep = ex.apply(tx.clone(), None).unwrap();
+    let events = drain(tx, rx);
+    assert_eq!(rep.applied, 0);
+    assert_eq!(rep.skipped, 0);
+    assert_eq!(rep.refused, 0);
+    assert!(events.iter().any(|e| matches!(e, ExecEvent::Done)));
+    assert!(
+        !quarantine_root(vol.path()).exists(),
+        "no quarantine root for an empty plan"
+    );
+    assert_eq!(
+        collect_wal_files(vol.path()),
+        Vec::<PathBuf>::new(),
+        "no per-volume WAL created"
+    );
+    drop(ex); // release the home flock before a second Store opens on the same home
+
+    // Non-quarantine actions only (all refused / prune commands): same no-op.
+    let refused = PlanEntry {
+        cid: "C-001".into(),
+        path: vol.path().join("x.bin"),
+        path_hash: [1; 8],
+        alloc_bytes: 10,
+        grade: Grade::PureCache,
+        action: PlanAction::Refuse {
+            reason: disk_janitor::Refusal::GradeNotAllowed,
+        },
+        evidence: vec![],
+    };
+    let pruned = PlanEntry {
+        cid: "C-002".into(),
+        path: vol.path().join("y.bin"),
+        path_hash: [2; 8],
+        alloc_bytes: 10,
+        grade: Grade::PureCache,
+        action: PlanAction::PruneCommand {
+            cmd: "echo".into(),
+            dry_run: String::new(),
+        },
+        evidence: vec![],
+    };
+    let mut ex2 = open_executor("plan-0b", vec![refused, pruned], vol.path(), home.path());
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rep2 = ex2.apply(tx, None).unwrap();
+    assert_eq!(rep2.applied, 0);
+    assert!(!quarantine_root(vol.path()).exists());
+
+    // Purge of an empty plan: typed 0 == expected 0 -> empty success.
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let prep = ex2.purge(0, tx).unwrap();
+    assert_eq!(prep.entries, 0);
+    assert_eq!(prep.freed_bytes, 0);
+
+    // Restore of an unknown op: empty report, no errors.
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rrep = ex2.restore("op-none", tx).unwrap();
+    assert!(rrep.restored.is_empty() && rrep.missing.is_empty() && rrep.collided.is_empty());
+}
+
+/// Non-UTF8 filename: the JSONL WAL/ledger record paths through serde PathBuf
+/// serialization, which rejects invalid UTF-8 — apply refuses such an entry
+/// cleanly (Error event, sibling entries proceed) instead of mangling the name
+/// mid-path or aborting the batch with a serde error. NOTE: APFS itself
+/// rejects non-UTF8 names (EILSEQ, verified on this host), so the fixture
+/// exists only as an OsString — the refusal fires before any FS access, which
+/// is exactly the guard's contract for legacy/exFAT/network mounts.
+#[test]
+fn apply_refuses_non_utf8_filename() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    use std::ffi::OsStr;
+    let bad_path = vol.path().join(OsStr::from_bytes(b"bad-\xFF.bin"));
+    let good = vol.path().join("ok.bin");
+    fs::write(&good, b"fine").unwrap();
+
+    // The format boundary: serde cannot serialize a non-UTF8 path — this is
+    // WHY the refusal exists (a mid-batch serde error would abort siblings).
+    let w = WalEntry {
+        op_id: "x".into(),
+        kind: WalKind::Intent,
+        plan_id: "p".into(),
+        entry: path_hash(&bad_path),
+        from: Some(bad_path.clone()),
+        to: Some(vol.path().join("q")),
+        bytes: 7,
+        undo_of: None,
+    };
+    assert!(
+        serde_json::to_vec(&w).is_err(),
+        "WAL record with a non-UTF8 path cannot serialize"
+    );
+
+    let mut ex = open_executor(
+        "plan-1",
+        vec![
+            entry("C-001", bad_path.clone(), 7),
+            entry("C-002", good.clone(), 4),
+        ],
+        vol.path(),
+        home.path(),
+    );
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let rep = ex.apply(tx.clone(), None).unwrap();
+    let events = drain(tx, rx);
+
+    assert_eq!(rep.applied, 1, "UTF-8 sibling proceeds");
+    assert_eq!(rep.refused, 1, "non-UTF8 entry refused cleanly");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ExecEvent::Error { cid, .. } if cid == "C-001"))
+    );
+    // The sibling landed under its exact name; no lossy-mangled target exists.
+    let root = quarantine_root(vol.path());
+    let op_dir = root.join(&rep.op_id);
+    let names: Vec<std::ffi::OsString> = fs::read_dir(&op_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("ok.bin")]);
+    // The WAL records only the UTF-8 entry.
+    let wal = wal_entries(&root.join("wal.jsonl"));
+    assert_eq!(wal.len(), 2, "intent+result for the good entry only");
+    assert!(
+        wal.iter()
+            .all(|w| w.from.as_deref() == Some(good.as_path()))
+    );
+}
+
+/// Grace boundary (§5.2 step 4 + case 3): only strictly-past grace
+/// (`grace_expires_at < now`) surfaces; entries purged or restored are excluded
+/// even when the ledger rec is the ONLY marker — and a purge whose WAL result
+/// committed but whose ledger rec crashed away is not double-counted. The
+/// exclusion lists are rebuilt from replay on every startup; run recovery twice
+/// to prove the answer is stable across restarts.
+#[test]
+fn recover_expired_grace_boundary_and_exclusions() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    let root = quarantine_root(vol.path());
+    let op_dir = root.join("op-grace");
+    fs::create_dir_all(&op_dir).unwrap();
+
+    let now = chrono::Utc::now();
+    let past = now - chrono::Duration::hours(1);
+    let future = now + chrono::Duration::hours(1);
+    let apply_rec =
+        |cid: &str, src: PathBuf, qpath: PathBuf, bytes: u64, grace| LedgerRecord::Apply {
+            plan_id: "p1".into(),
+            entry: entry(cid, src.clone(), bytes),
+            original_path: src.clone(),
+            quarantine_path: qpath,
+            renamex_np: true,
+            undo: ledger::Undo {
+                original_path: src,
+                byte_count: bytes,
+                grace_expires_at: grace,
+            },
+        };
+
+    let mut store = ledger::open(home.path()).unwrap();
+
+    // (a) expired AND still quarantined -> surfaced.
+    let a_src = vol.path().join("a.bin");
+    let a_q = op_dir.join("a.bin");
+    fs::write(&a_q, b"a").unwrap();
+    store
+        .append(
+            Kind::Apply,
+            &apply_rec("C-001", a_src.clone(), a_q.clone(), 100, past),
+        )
+        .unwrap();
+
+    // (b) grace in the FUTURE + still quarantined -> NOT surfaced (only strictly
+    //     past grace expires; `now` itself is not past).
+    let b_q = op_dir.join("b.bin");
+    fs::write(&b_q, b"b").unwrap();
+    store
+        .append(
+            Kind::Apply,
+            &apply_rec("C-002", vol.path().join("b.bin"), b_q, 200, future),
+        )
+        .unwrap();
+
+    // (c) expired + purged (ledger purge rec) -> excluded.
+    let c_q = op_dir.join("c.bin");
+    fs::write(&c_q, b"c").unwrap();
+    let c_src = vol.path().join("c.bin");
+    let c_entry = entry("C-003", c_src.clone(), 300);
+    store
+        .append(
+            Kind::Apply,
+            &apply_rec("C-003", c_src.clone(), c_q.clone(), 300, past),
+        )
+        .unwrap();
+    store
+        .append(
+            Kind::Purge,
+            &LedgerRecord::Purge {
+                plan_id: "p1".into(),
+                entry: c_entry,
+                bytes_freed: 300,
+                quarantine_path: c_q.clone(),
+            },
+        )
+        .unwrap();
+    fs::remove_file(&c_q).unwrap();
+
+    // (d) expired + restored (ledger restore rec) -> excluded.
+    let d_q = op_dir.join("d.bin");
+    fs::write(&d_q, b"d").unwrap();
+    let d_src = vol.path().join("d.bin");
+    let d_entry = entry("C-004", d_src.clone(), 400);
+    let d_seq = store
+        .append(
+            Kind::Apply,
+            &apply_rec("C-004", d_src.clone(), d_q.clone(), 400, past),
+        )
+        .unwrap();
+    store
+        .append(
+            Kind::Restore,
+            &LedgerRecord::Restore {
+                plan_id: "p1".into(),
+                entry: d_entry,
+                from: d_q.clone(),
+                to: d_src.clone(),
+                undoes: d_seq,
+            },
+        )
+        .unwrap();
+    fs::remove_file(&d_q).unwrap();
+
+    // (e) expired + file gone with NO purge/restore rec — the WAL purge result
+    //     committed but the ledger rec crashed away (mid-purge crash): excluded
+    //     by FS state, not double-counted.
+    let e_q = op_dir.join("e.bin");
+    fs::write(&e_q, b"e").unwrap();
+    let e_src = vol.path().join("e.bin");
+    store
+        .append(
+            Kind::Apply,
+            &apply_rec("C-005", e_src.clone(), e_q.clone(), 500, past),
+        )
+        .unwrap();
+    fs::remove_file(&e_q).unwrap();
+    let mut wal_store = ledger::open(&root).unwrap();
+    wal_store
+        .wal_intent(&WalEntry {
+            op_id: "purge-wal-crash".into(),
+            kind: WalKind::Result,
+            plan_id: "p1".into(),
+            entry: path_hash(&e_src),
+            from: None,
+            to: None,
+            bytes: 500,
+            undo_of: None,
+        })
+        .unwrap();
+    drop(wal_store);
+    drop(store);
+
+    let rr = execute::recover(&[vol_info(vol.path())]);
+    assert_eq!(
+        rr.expired_grace.len(),
+        1,
+        "only the truly-expired survivor surfaces"
+    );
+    assert_eq!(rr.expired_grace[0].op_id, "op-grace");
+    assert_eq!(rr.expired_grace[0].original_path, a_src);
+    assert_eq!(rr.expired_grace[0].bytes, 100);
+    // The purge-result WAL record is a Result, not an intent — nothing to reconcile.
+    assert_eq!(rr.dangling_intents.len(), 0);
+    assert_eq!(rr.rolled_forward, 0);
+
+    // Across restarts the exclusion lists rebuild from the same replay — stable.
+    let rr2 = execute::recover(&[vol_info(vol.path())]);
+    assert_eq!(rr2.expired_grace.len(), 1);
+    assert_eq!(rr2.expired_grace[0].original_path, a_src);
+}
+
+/// Case 1: a torn WAL tail left by a crash mid-purge. The purge unlink landed
+/// but the WAL result append was torn; recovery must park the torn bytes,
+/// keep the committed apply pair, reconcile nothing (no dangling intent — the
+/// apply pair is committed), and NOT surface the expired-grace entry whose
+/// quarantine is gone (rule 3's else-branch: path absent => drop, not roll
+/// forward).
+#[test]
+fn recover_parks_torn_tail_after_mid_purge_crash() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+    let root = quarantine_root(vol.path());
+    let op_dir = root.join("op-torn");
+    fs::create_dir_all(&op_dir).unwrap();
+    let src = vol.path().join("a.bin");
+    let qpath = op_dir.join("a.bin");
+    fs::write(&qpath, b"quarantined").unwrap();
+
+    // Committed apply pair in the per-volume WAL (intent + result).
+    {
+        let mut wal = ledger::open(&root).unwrap();
+        let intent = WalEntry {
+            op_id: "op-torn".into(),
+            kind: WalKind::Intent,
+            plan_id: "p1".into(),
+            entry: path_hash(&src),
+            from: Some(src.clone()),
+            to: Some(qpath.clone()),
+            bytes: 12,
+            undo_of: None,
+        };
+        wal.wal_intent(&intent).unwrap();
+        wal.wal_intent(&WalEntry {
+            kind: WalKind::Result,
+            ..intent.clone()
+        })
+        .unwrap();
+    }
+    // Home-ledger apply rec whose grace ALREADY expired (would surface if the
+    // quarantine still existed).
+    {
+        let mut store = ledger::open(home.path()).unwrap();
+        store
+            .append(
+                Kind::Apply,
+                &LedgerRecord::Apply {
+                    plan_id: "p1".into(),
+                    entry: entry("C-001", src.clone(), 12),
+                    original_path: src.clone(),
+                    quarantine_path: qpath.clone(),
+                    renamex_np: true,
+                    undo: ledger::Undo {
+                        original_path: src,
+                        byte_count: 12,
+                        grace_expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+                    },
+                },
+            )
+            .unwrap();
+    }
+    // Mid-purge crash state: the unlink landed, the WAL result append was torn
+    // (partial final line, no trailing newline).
+    fs::remove_file(&qpath).unwrap();
+    let wal_path = root.join("wal.jsonl");
+    let torn_bytes = br#"{"v":1,"seq":99,"kind":"result","rec":{"op_id":"purge-torn""#;
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new().append(true).open(&wal_path).unwrap();
+        f.write_all(torn_bytes).unwrap();
+    }
+
+    let rr = execute::recover(&[vol_info(vol.path())]);
+    // recover() canonicalizes roots (/var -> /private/var); compare canonical.
+    let wal_canon = wal_path.canonicalize().unwrap();
+    assert_eq!(
+        rr.torn_tail.as_deref(),
+        Some(wal_canon.as_path()),
+        "torn tail reported before truncation"
+    );
+    let parked = wal_path.with_file_name("wal.jsonl.torn");
+    assert!(parked.exists(), "torn bytes parked");
+    assert_eq!(fs::read(&parked).unwrap(), torn_bytes.to_vec());
+    // Committed pair intact after repair; nothing to reconcile, nothing rolled forward.
+    let wal = wal_entries(&wal_path);
+    assert_eq!(wal.len(), 2, "intent+result survive the torn-tail repair");
+    assert_eq!(rr.dangling_intents.len(), 0);
+    assert_eq!(rr.rolled_forward, 0);
+    // The expired-grace rec is NOT surfaced: its quarantine is gone (rule 3
+    // else-branch), even though no purge rec exists in the ledger.
+    assert!(rr.expired_grace.is_empty());
 }

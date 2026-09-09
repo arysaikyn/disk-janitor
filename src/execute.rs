@@ -53,6 +53,9 @@ pub enum KillPoint {
     AfterRenameBeforeResult,
     /// After one entry's result, before the next entry's intent.
     MidBatch,
+    /// After one entry's full purge (unlink + WAL result + ledger rec),
+    /// before the next entry's unlink.
+    MidPurge,
 }
 
 impl KillPoint {
@@ -66,6 +69,7 @@ impl KillPoint {
                 Some(KillPoint::AfterRenameBeforeResult)
             }
             "MidBatch" | "mid_batch" => Some(KillPoint::MidBatch),
+            "MidPurge" | "mid_purge" => Some(KillPoint::MidPurge),
             _ => None,
         }
     }
@@ -130,6 +134,9 @@ pub struct RestoreReport {
     pub restored: Vec<String>,
     /// Quarantine paths that no longer exist (already purged) — benign skip.
     pub missing: Vec<String>,
+    /// Entries restored to `original-<n>` because the original path was
+    /// occupied (D-26 keep-both default) — the user's file was never clobbered.
+    pub collided: Vec<String>,
 }
 
 /// The execute engine. Holds one plan's entries plus the home ledger store.
@@ -237,8 +244,9 @@ pub fn sanitize_wal_tail(path: &Path) -> Result<()> {
         .unwrap_or(0);
     let mut torn_name = path.as_os_str().as_encoded_bytes().to_vec();
     torn_name.extend_from_slice(b".torn");
+    use std::os::unix::ffi::OsStringExt;
     fs::write(
-        PathBuf::from(String::from_utf8_lossy(&torn_name).into_owned()),
+        PathBuf::from(std::ffi::OsString::from_vec(torn_name)),
         &data[cut..],
     )?;
     let f = fs::OpenOptions::new().write(true).open(path)?;
@@ -343,7 +351,11 @@ pub(crate) fn pick_free_target(op_dir: &Path, base: &std::ffi::OsStr) -> Result<
         let name = if n == 0 {
             base.to_os_string()
         } else {
-            std::ffi::OsString::from(format!("{}-{n}", base.to_string_lossy()))
+            // OsString push keeps arbitrary bytes intact (a to_string_lossy
+            // suffix would mangle non-UTF8 basenames mid-path).
+            let mut name = base.to_os_string();
+            name.push(format!("-{n}"));
+            name
         };
         let to = op_dir.join(&name);
         match fs::symlink_metadata(&to) {
@@ -369,7 +381,9 @@ pub(crate) fn rename_with_retry(
         let name = if n == 0 {
             base.to_os_string()
         } else {
-            std::ffi::OsString::from(format!("{}-{n}", base.to_string_lossy()))
+            let mut name = base.to_os_string();
+            name.push(format!("-{n}"));
+            name
         };
         let to = op_dir.join(name);
         match macos::rename_no_replace(from, &to) {
@@ -385,6 +399,43 @@ pub(crate) fn rename_with_retry(
         "rename target suffix space exhausted for {}",
         from.display()
     )
+}
+
+/// D-26 keep-both restore: move `from` to `to`, or `to-1`, `to-2`, … when the
+/// target is occupied — the syscall (`RENAME_EXCL`) is the existence check, so
+/// an occupied original path is NEVER clobbered. Returns the final target.
+/// `Err(NotFound)` means the SOURCE (quarantine) is gone — already
+/// purged/restored; the caller maps that to a benign missing.
+pub(crate) fn restore_keep_both(from: &Path, to: &Path) -> io::Result<PathBuf> {
+    let base = match to.file_name() {
+        Some(b) => b.to_os_string(),
+        None => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "restore target has no file name",
+            ));
+        }
+    };
+    let parent = to.parent().unwrap_or(Path::new("/"));
+    for n in 0..=100u32 {
+        let name = if n == 0 {
+            base.clone()
+        } else {
+            let mut name = base.clone();
+            name.push(format!("-{n}"));
+            name
+        };
+        let target = parent.join(name);
+        match macos::rename_no_replace(from, &target) {
+            Ok(()) => return Ok(target),
+            Err(e) if e.raw_os_error() == Some(libc::EEXIST) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::other(format!(
+        "restore suffix space exhausted for {}",
+        to.display()
+    )))
 }
 
 impl Executor {
@@ -420,6 +471,19 @@ impl Executor {
 
         let last_idx = quarantine_entries.len().saturating_sub(1);
         for (idx, entry) in quarantine_entries.iter().enumerate() {
+            // The JSONL WAL/ledger record paths via serde PathBuf serialization,
+            // which rejects invalid UTF-8 — refuse such entries cleanly per
+            // entry (before any WAL/dir write for it) instead of failing the
+            // whole batch mid-way with a serde error. Full support would need a
+            // byte-encoded path format (lib.rs WalEntry — out of execute scope).
+            if entry.path.to_str().is_none() {
+                report.refused += 1;
+                let _ = tx.send(ExecEvent::Error {
+                    cid: entry.cid.clone(),
+                    err: "entry path is not valid UTF-8 (cannot be recorded in the WAL)".into(),
+                });
+                continue;
+            }
             // Source already moved (idempotent re-apply) — benign skip BEFORE any
             // WAL write or directory creation.
             let src_dev = match macos::lstat_dev(&entry.path) {
@@ -595,9 +659,14 @@ impl Executor {
         let ledger_path = home.join("ledger.jsonl");
         let mut report = PurgeReport::default();
         let mut per_vol_wal: BTreeMap<PathBuf, Store> = BTreeMap::new();
+        let kill = parse_kill_env();
         if ledger_path.exists() {
             let (records, _) = ledger::replay(&ledger_path)?;
-            for rec in records.iter().filter(|r| r.kind == Kind::Apply) {
+            let apply_recs: Vec<&Record> =
+                records.iter().filter(|r| r.kind == Kind::Apply).collect();
+            let last_idx = apply_recs.len().saturating_sub(1);
+            let mut purged = 0u32;
+            for (idx, rec) in apply_recs.iter().enumerate() {
                 let apply = match &rec.rec {
                     LedgerRecord::Apply {
                         plan_id,
@@ -656,6 +725,12 @@ impl Executor {
                     },
                 )?;
                 let _ = tx.send(ExecEvent::EntryPurged { cid, bytes: freed });
+                purged += 1;
+                // D-15 crash point: after one entry's COMPLETE purge (unlink +
+                // WAL result + ledger rec), before the next entry's unlink.
+                if kill == Some(KillPoint::MidPurge) && purged == 1 && idx != last_idx {
+                    std::process::exit(137);
+                }
             }
         }
         // Remove op dirs that became empty.
@@ -761,14 +836,22 @@ impl Executor {
                     report.missing.push(cid);
                     continue;
                 }
-                if let Err(e) = macos::rename_replace(&qpath, &orig) {
-                    if e.kind() == io::ErrorKind::NotFound {
+                // D-26: default restore NEVER clobbers — an occupied original
+                // path (user recreated the file) gets `original-<n>` instead.
+                let target = match restore_keep_both(&qpath, &orig) {
+                    Ok(t) => t,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
                         report.missing.push(cid);
                         continue;
                     }
-                    return Err(e).with_context(|| {
-                        format!("restore rename {} -> {}", qpath.display(), orig.display())
-                    });
+                    Err(e) => {
+                        return Err(e).with_context(|| {
+                            format!("restore rename {} -> {}", qpath.display(), orig.display())
+                        });
+                    }
+                };
+                if target != orig {
+                    report.collided.push(cid.clone());
                 }
                 // Durability is the home-ledger restore rec (undoes = apply seq);
                 // the per-volume WAL is append-only and keeps the intent/result.
@@ -779,7 +862,7 @@ impl Executor {
                             plan_id: plan_id.clone(),
                             entry: entry.clone(),
                             from: qpath.clone(),
-                            to: orig.clone(),
+                            to: target.clone(),
                             undoes: *seq,
                         },
                     )?;
@@ -787,7 +870,7 @@ impl Executor {
                 report.restored.push(cid.clone());
                 let _ = tx.send(ExecEvent::EntryRestored {
                     cid,
-                    to: orig.display().to_string(),
+                    to: target.display().to_string(),
                 });
             }
             // Remove the op dir when empty (SPEC data-flow step 7).

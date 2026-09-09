@@ -124,7 +124,11 @@ fn crash_dispatch(point: &str) -> bool {
         let home = child_env_path("CHILD_HOME");
         let vol = child_env_path("CHILD_VOL");
         let plan_id = std::env::var("CHILD_PLAN_ID").expect("CHILD_PLAN_ID");
-        child_apply(&home, &vol, &plan_id);
+        if point == "MidPurge" {
+            child_apply_then_purge(&home, &vol, &plan_id);
+        } else {
+            child_apply(&home, &vol, &plan_id);
+        }
     }
     is_crash_child()
 }
@@ -373,4 +377,191 @@ fn crash_mid_batch() {
         fs::read(vol.path().join("data-b.bin")).unwrap(),
         vec![0xCDu8; B_BYTES as usize]
     );
+}
+
+/// Child-mode body: apply fully, then purge; `purge` exits 137 at MidPurge.
+fn child_apply_then_purge(home: &Path, vol: &Path, plan_id: &str) {
+    let store = ledger::open(home).expect("child home ledger");
+    let mut ex = execute::open(
+        plan_id.to_string(),
+        build_entries(vol),
+        &[vol_info(vol)],
+        store,
+    )
+    .expect("child executor");
+    let (tx, _rx) = crossbeam_channel::unbounded::<ExecEvent>();
+    ex.apply(tx, None).expect("child apply");
+    let (tx, _rx) = crossbeam_channel::unbounded::<ExecEvent>();
+    let _ = ex.purge(A_BYTES + B_BYTES, tx);
+    // Unreachable when KILL_AT is honored — the kill fires inside purge.
+    panic!("child purge returned without hitting the kill point");
+}
+
+/// KillPoint::MidPurge — the first entry is FULLY purged (unlink + WAL result +
+/// ledger rec), the second is still quarantined. Asserts the per-entry WAL
+/// ordering (case 4: results are appended after each unlink, not batched at the
+/// end — exactly one purge result exists) and that recovery + a re-purge
+/// reconcile the crash idempotently (case 1: no dangling intent, no roll
+/// forward — the apply pair is committed; the freed entry is skipped on re-run).
+#[test]
+fn crash_mid_purge() {
+    if crash_dispatch("MidPurge") {
+        return;
+    }
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+    create_files(vol.path());
+    let plan_id = "crash-p5";
+
+    let code = spawn_crash("MidPurge", home.path(), vol.path(), plan_id);
+    assert_eq!(code, Some(137), "child dies at the kill point");
+
+    let root = vol.path().join(".Trash-janitor");
+    let wal_path = root.join("wal.jsonl");
+    let wal = wal_entries(&wal_path);
+    let op_id = wal
+        .iter()
+        .find(|w| w.kind == WalKind::Intent)
+        .expect("apply intent")
+        .op_id
+        .clone();
+    // Entry 1 fully purged; entry 2 still quarantined.
+    assert!(
+        !root.join(&op_id).join("data-a.bin").exists(),
+        "entry 1 purged before the crash"
+    );
+    let q2 = root.join(&op_id).join("data-b.bin");
+    assert!(q2.exists(), "entry 2 survives the crash");
+    assert_eq!(fs::read(&q2).unwrap(), vec![0xCDu8; B_BYTES as usize]);
+    assert!(!vol.path().join("data-a.bin").exists());
+    // WAL ordering (case 4): apply pair per entry + EXACTLY ONE purge result —
+    // per-entry appends, not a batch at the end.
+    let purge_results = wal
+        .iter()
+        .filter(|w| w.kind == WalKind::Result && w.from.is_none() && w.to.is_none())
+        .count();
+    assert_eq!(
+        purge_results, 1,
+        "one WAL result for the one completed purge"
+    );
+    // Ledger: exactly one purge rec (the second entry's rec never landed).
+    let (records, _) = ledger::replay(&home.path().join("ledger.jsonl")).unwrap();
+    assert_eq!(records.iter().filter(|r| r.kind == Kind::Purge).count(), 1);
+
+    // Recovery: the apply pairs are committed and the lost purge result needs
+    // no roll-forward (rule 3's else-branch: path gone, nothing dangling).
+    let rr = execute::recover(&[vol_info(vol.path())]);
+    assert_eq!(rr.dangling_intents.len(), 0);
+    assert_eq!(rr.rolled_forward, 0);
+    assert!(rr.expired_grace.is_empty());
+
+    // Re-purge after the crash: the freed entry is skipped idempotently; only
+    // the survivor is freed.
+    let store = ledger::open(home.path()).unwrap();
+    let mut ex = execute::open(
+        plan_id.to_string(),
+        build_entries(vol.path()),
+        &[vol_info(vol.path())],
+        store,
+    )
+    .unwrap();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rep = ex.purge(A_BYTES + B_BYTES, tx).unwrap();
+    assert_eq!(rep.freed_bytes, B_BYTES, "only the surviving entry freed");
+    assert_eq!(rep.entries, 1);
+    assert!(!q2.exists());
+    let wal = wal_entries(&wal_path);
+    assert_eq!(
+        wal.iter()
+            .filter(|w| w.kind == WalKind::Result && w.from.is_none())
+            .count(),
+        2,
+        "second purge appends its own result"
+    );
+}
+
+/// Case 7: re-running the SAME plan after a MidBatch crash. The committed entry
+/// is skipped (source ENOENT — benign, before any WAL write), only the missing
+/// entry is applied under a NEW op id; the WAL ends with exactly two
+/// intent/result pairs — no duplicates for the already-committed entry.
+#[test]
+fn crash_mid_batch_then_reapply_applies_only_missing() {
+    // In the crash child, crash_mid_batch owns the MidBatch dispatch (one
+    // dispatcher per point — a second concurrent dispatch would race on the
+    // home flock); just stand aside and let it kill the process.
+    if is_crash_child() {
+        return;
+    }
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = TempDir::new().unwrap();
+    let vol = TempDir::new().unwrap();
+    unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+    create_files(vol.path());
+    let plan_id = "crash-p6";
+
+    let code = spawn_crash("MidBatch", home.path(), vol.path(), plan_id);
+    assert_eq!(code, Some(137), "child dies at the kill point");
+
+    let root = vol.path().join(".Trash-janitor");
+    let wal_path = root.join("wal.jsonl");
+    let wal = wal_entries(&wal_path);
+    assert_eq!(wal.len(), 2, "first entry committed before the crash");
+    let op1 = wal[0].op_id.clone();
+    let h1 = path_hash(&vol.path().join("data-a.bin"));
+    assert!(
+        vol.path().join("data-b.bin").exists(),
+        "second entry untouched"
+    );
+
+    // Re-run the SAME plan.
+    let store = ledger::open(home.path()).unwrap();
+    let mut ex = execute::open(
+        plan_id.to_string(),
+        build_entries(vol.path()),
+        &[vol_info(vol.path())],
+        store,
+    )
+    .unwrap();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let rep = ex.apply(tx, None).unwrap();
+    assert_eq!(rep.applied, 1, "only the missing entry applied");
+    assert_eq!(rep.skipped, 1, "committed entry skipped as already moved");
+    assert!(!vol.path().join("data-a.bin").exists());
+    assert!(!vol.path().join("data-b.bin").exists());
+    assert!(
+        root.join(&op1).join("data-a.bin").exists(),
+        "first op intact"
+    );
+
+    // No duplicate pairs: each path hash appears exactly twice (intent+result),
+    // the first op's records all under op1, the second op's under one NEW op.
+    let wal = wal_entries(&wal_path);
+    assert_eq!(wal.len(), 4);
+    let h2 = path_hash(&vol.path().join("data-b.bin"));
+    let a_recs: Vec<&disk_janitor::WalEntry> = wal.iter().filter(|w| w.entry == h1).collect();
+    assert_eq!(a_recs.len(), 2, "committed entry: no duplicate WAL records");
+    assert!(a_recs.iter().all(|w| w.op_id == op1));
+    let b_recs: Vec<&disk_janitor::WalEntry> = wal.iter().filter(|w| w.entry == h2).collect();
+    assert_eq!(b_recs.len(), 2);
+    assert!(
+        b_recs
+            .iter()
+            .all(|w| w.op_id == b_recs[0].op_id && w.op_id != op1),
+        "re-applied entry under a fresh op"
+    );
+    assert_eq!(
+        b_recs.iter().filter(|w| w.kind == WalKind::Intent).count(),
+        1
+    );
+    assert_eq!(
+        b_recs.iter().filter(|w| w.kind == WalKind::Result).count(),
+        1
+    );
+
+    // Recovery: everything committed, nothing dangling.
+    let rr = execute::recover(&[vol_info(vol.path())]);
+    assert_eq!(rr.dangling_intents.len(), 0);
+    assert_eq!(rr.rolled_forward, 0);
 }

@@ -74,27 +74,6 @@ pub(crate) fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Restore move: `renameatx_np(from, to, 0)` — plain rename semantics; replace
-/// of an existing target is fine on macOS (the reverse of the EXCL quarantine).
-pub(crate) fn rename_replace(from: &Path, to: &Path) -> io::Result<()> {
-    let from = cstr(from)?;
-    let to = cstr(to)?;
-    let rc = unsafe {
-        libc::renameatx_np(
-            libc::AT_FDCWD,
-            from.as_ptr(),
-            libc::AT_FDCWD,
-            to.as_ptr(),
-            0,
-        )
-    };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
 /// Set UF_HIDDEN on `p` in addition to its existing flags (never clears flags).
 pub(crate) fn set_hidden(p: &Path) -> io::Result<()> {
     let st = lstat(p)?;
