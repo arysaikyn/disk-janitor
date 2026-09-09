@@ -33,8 +33,8 @@ impl Default for ScanState {
 /// every command through the local demo fallbacks (app/src/lib/ipc.ts) instead
 /// of the real IPC.
 #[tauri::command]
-pub fn is_demo(state: State<'_, ScanState>) -> bool {
-    state.demo
+pub async fn is_demo(state: State<'_, ScanState>) -> Result<bool, String> {
+    Ok(state.demo)
 }
 
 /// Scan progress delta — typed channel payload (SPEC §3.3: ≥100 ms throttle).
@@ -82,11 +82,11 @@ pub struct VolumeDto {
 }
 
 #[tauri::command]
-pub fn get_volumes(state: State<'_, ScanState>) -> Vec<VolumeDto> {
+pub async fn get_volumes(state: State<'_, ScanState>) -> Result<Vec<VolumeDto>, String> {
     if state.demo {
-        return demo::volumes();
+        return Ok(demo::volumes());
     }
-    disk_janitor::scan::volumes()
+    Ok(disk_janitor::scan::volumes()
         .into_iter()
         .map(|v| VolumeDto {
             mount: v.mount.display().to_string(),
@@ -96,13 +96,13 @@ pub fn get_volumes(state: State<'_, ScanState>) -> Vec<VolumeDto> {
             read_only: v.read_only,
             writable: !v.read_only,
         })
-        .collect()
+        .collect())
 }
 
 /// Start a scan of `roots`, streaming batches + candidates over `channel`.
 /// Cancel via `cancel_scan` (R4; D-15: drop incomplete batches, keep completed).
 #[tauri::command]
-pub fn start_scan(
+pub async fn start_scan(
     roots: Vec<String>,
     min_bytes: Option<u64>,
     channel: Channel<ScanProgress>,
@@ -145,7 +145,14 @@ pub fn start_scan(
     let handle = disk_janitor::scan::start(opts, tx, cancel, stats.clone());
     let started = std::time::Instant::now();
     let mut batches: Vec<disk_janitor::scan::DirStat> = Vec::new();
+    let mut scan_totals: Option<disk_janitor::scan::ScanTotals> = None;
     let mut last_emit = std::time::Instant::now();
+    // Classify runs BEFORE Finished: the frontend stops consuming the channel on
+    // Finished, so candidate events emitted after it would never render.
+    let th = disk_janitor::Thresholds {
+        min_bytes: min_bytes.unwrap_or(disk_janitor::Thresholds::default().min_bytes),
+        ..disk_janitor::Thresholds::default()
+    };
     for event in rx {
         match event {
             disk_janitor::scan::ScanEvent::Batch(b) => {
@@ -170,21 +177,12 @@ pub fn start_scan(
                 });
             }
             disk_janitor::scan::ScanEvent::Finished(t) => {
-                let _ = channel.send(ScanProgress::Finished {
-                    files: t.files,
-                    bytes: t.alloc,
-                    elapsed_ms: t.elapsed_ms,
-                });
+                scan_totals = Some(t);
                 break;
             }
         }
     }
     let _ = handle.join();
-    // Classify from the collected batches, emit candidates as they're found.
-    let th = disk_janitor::Thresholds {
-        min_bytes: min_bytes.unwrap_or(disk_janitor::Thresholds::default().min_bytes),
-        ..disk_janitor::Thresholds::default()
-    };
     let candidates =
         disk_janitor::classify::candidates_from_batch(std::mem::take(&mut batches), &th);
     for c in &candidates {
@@ -212,6 +210,13 @@ pub fn start_scan(
                 .collect(),
         });
     }
+    // Finished LAST — terminal event; the UI closes the channel after it.
+    let t = scan_totals.unwrap_or_default();
+    let _ = channel.send(ScanProgress::Finished {
+        files: t.files,
+        bytes: t.alloc,
+        elapsed_ms: t.elapsed_ms,
+    });
     // Persist last scan (owner decision 09-08: get_last_scan reopens without rescan).
     let out_dir = dirs_home();
     let scan_path = out_dir.join("last-scan.json");
@@ -231,13 +236,14 @@ pub fn start_scan(
 }
 
 #[tauri::command]
-pub fn cancel_scan(state: State<'_, ScanState>) {
+pub async fn cancel_scan(state: State<'_, ScanState>) -> Result<(), String> {
     state.cancel.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 /// Reopen the last scan result without rescanning (SPEC §2.3 persistence row).
 #[tauri::command]
-pub fn get_last_scan(state: State<'_, ScanState>) -> Result<Option<serde_json::Value>, String> {
+pub async fn get_last_scan(state: State<'_, ScanState>) -> Result<Option<serde_json::Value>, String> {
     if state.demo {
         return Ok(Some(demo::last_scan()));
     }
@@ -258,7 +264,7 @@ pub fn get_last_scan(state: State<'_, ScanState>) -> Result<Option<serde_json::V
 
 /// Build a plan from the last scan (policy optional NL sentence or structured).
 #[tauri::command]
-pub fn build_plan(
+pub async fn build_plan(
     scan_json_path: String,
     policy: Option<String>,
     min_bytes: Option<u64>,
@@ -346,7 +352,7 @@ fn writable_vols() -> Vec<disk_janitor::VolumeInfo> {
 
 /// Apply the plan manifest (soft gate — reversible; SPEC §5.3).
 #[tauri::command]
-pub fn apply_plan(
+pub async fn apply_plan(
     plan_id: String,
     channel: Channel<ExecProgress>,
     state: State<'_, ScanState>,
@@ -382,7 +388,7 @@ pub fn apply_plan(
 /// Purge: the ONLY irreversible step. `typed_bytes` must equal the quarantine
 /// total (P4 — no bypass exists at any layer, including this one).
 #[tauri::command]
-pub fn purge_plan(
+pub async fn purge_plan(
     plan_id: String,
     typed_bytes: u64,
     channel: Channel<ExecProgress>,
@@ -413,7 +419,7 @@ pub fn purge_plan(
 
 /// Restore a quarantined op (one click, within grace).
 #[tauri::command]
-pub fn restore_op(
+pub async fn restore_op(
     op_id: String,
     channel: Channel<ExecProgress>,
     state: State<'_, ScanState>,
@@ -438,7 +444,7 @@ pub fn restore_op(
 
 /// Ledger tail for the 台账 screen (R5).
 #[tauri::command]
-pub fn get_ledger_tail(
+pub async fn get_ledger_tail(
     limit: Option<usize>,
     state: State<'_, ScanState>,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -463,7 +469,7 @@ pub fn get_ledger_tail(
 
 /// Startup recovery (§5.2): reconcile WALs, surface dangling intents + expired grace.
 #[tauri::command]
-pub fn recover_on_launch(state: State<'_, ScanState>) -> Result<serde_json::Value, String> {
+pub async fn recover_on_launch(state: State<'_, ScanState>) -> Result<serde_json::Value, String> {
     if state.demo {
         return Ok(demo::recovery());
     }

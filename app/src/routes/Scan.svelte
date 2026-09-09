@@ -147,7 +147,7 @@
         />
       </svg>
       <div class="core">
-        <div class="pct num">{Math.round(pct)}%</div>
+        <div class="pct num">{indeterminate ? "…" : `${Math.round(pct)}%`}</div>
         <div class="n num">{fmtCount(files)}</div>
         <div class="n lbl">{finished ? t("scan.done") : t("scan.scanned")}</div>
       </div>
