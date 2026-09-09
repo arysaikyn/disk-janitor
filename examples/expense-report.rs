@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use disk_janitor::cost::{render_table, CostLedger};
+use disk_janitor::cost::{CostLedger, render_table};
 
 fn main() -> anyhow::Result<()> {
     let path = match std::env::args().nth(1) {
