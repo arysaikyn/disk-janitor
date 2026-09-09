@@ -24,3 +24,9 @@ janitor-ledger.jsonl
 *.swp
 .DS_Store
 plan-*.json
+
+# --- GUI build artifacts (M3) ---
+src-tauri/target/
+src-tauri/gen/
+app/node_modules/
+app/dist/
