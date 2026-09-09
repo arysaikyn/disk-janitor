@@ -1,0 +1,48 @@
+[package]
+name = "disk_janitor"
+version = "0.1.0"
+edition = "2024"
+description = "还我磁盘 Giveback — evidence-driven, reversibility-first disk cleanup (THU CS 30240522-3)"
+
+[[bin]]
+name = "janitor"
+path = "src/main.rs"
+
+[[bin]]
+name = "fixture-gen"
+path = "src/bin/fixture-gen.rs"
+
+[dependencies]
+# --- core (SPEC Part D §3, pins verified 2026-08-30/31) ---
+dua-core = "=3.3.0"                                 # [04] pin exact; macOS getattrlistbulk walker
+ignore = "0.4.33"                                   # [04] fallback walker + GitignoreBuilder
+globset = "0.4.20"                                  # [04] policy/ignore glob matching
+walkdir = "2.5.0"                                   # [04] serial fallback traversal
+crossbeam-channel = "0.5.16"                        # [04][06] scan->classify->exec events
+sysinfo = "0.39.6"                                  # [04] volume list/capacity
+rayon = "1.12.0"                                    # [04] CPU-bound classify pool only
+libc = "0.2.189"                                    # [04][05][08] renamex_np, setiopolicy_np, flags
+nix = { version = "0.31.3", features = ["fs"] }     # [05][08] fcntl/fstatat/flock
+rustix = { version = "1.1.4", features = ["fs"] }   # [05] xattr module
+tempfile = "3.27.0"                                 # [08] atomic persist for WAL compaction
+crc32fast = "1.5.1"                                 # [08] ledger/WAL per-record CRC
+fs4 = "1.1.0"                                       # [08] advisory flock
+fs-err = "3.3.1"                                    # [04][08] io error context
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"                              # [08] JSONL ledger + canonical CRC bytes
+toml = "0.9"                                        # config (M2/M4)
+thiserror = "2.0.20"
+anyhow = "1.0.104"                                  # CLI/plan boundary errors
+clap = { version = "4.6.6", features = ["derive"] } # ADR-14 thin CLI
+chrono = { version = "0.4.45", features = ["serde"] }
+uuid = { version = "1.26.0", features = ["v4"] }    # WAL op ids
+cargo_metadata = "0.23.1"                           # [SPEC §3.2] rust workspace target/ layout
+dirs = "6.0.0"                                      # ledger/config home resolution
+secrecy = "0.10"                                    # API-key type (M4 config)
+same-file = "1.0.6"                                 # volume identity checks (M2)
+
+[target.'cfg(unix)'.dependencies]
+xattr = "1.6.1"                                     # [05][11] com.apple.quarantine probe
+
+[profile.release]
+lto = "thin"
