@@ -590,9 +590,14 @@ pub struct SessionMeta {
 }
 
 /// R5 sessions directory — the CLI's `janitor agent` persists to the SAME dir
-/// (SPEC §3.7: `dirs::state_dir()/disk-janitor/sessions`).
+/// (SPEC §3.7). macOS has no XDG state dir (`dirs::state_dir()` is None there),
+/// so fall back to `$HOME/.local/state` — identical fallback to the CLI's
+/// `janitor_agent::sessions_dir` (src/main.rs) so both always agree.
 fn sessions_dir() -> Result<PathBuf, String> {
-    let state = dirs::state_dir().ok_or_else(|| "no user state dir".to_string())?;
+    let state = dirs::state_dir().unwrap_or_else(|| {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join(".local").join("state")
+    });
     Ok(state.join("disk-janitor").join("sessions"))
 }
 

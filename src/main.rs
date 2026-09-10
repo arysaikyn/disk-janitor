@@ -129,9 +129,16 @@ pub mod janitor_agent {
     /// (load) and the end-of-run persist (save).
     #[cfg(feature = "llm")]
     fn sessions_dir() -> anyhow::Result<std::path::PathBuf> {
-        let state =
-            dirs::state_dir().ok_or_else(|| anyhow::anyhow!("no user state dir (HOME unset?)"))?;
-        Ok(state.join("disk-janitor").join("sessions"))
+        // macOS has no XDG state dir: dirs::state_dir() is None there. Fall back
+        // to the SPEC §3.7 spelling ($HOME/.local/state) so CLI and GUI agree on
+        // macOS too. create_dir_all so the first save/list both work.
+        let state = dirs::state_dir().unwrap_or_else(|| {
+            let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+            home.join(".local").join("state")
+        });
+        let dir = state.join("disk-janitor").join("sessions");
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
     }
 
     /// `janitor agent [<scan-json> --prompt … | --resume <run_id>]` (D-36): live
