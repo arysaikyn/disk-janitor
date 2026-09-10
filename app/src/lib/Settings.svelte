@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { t, getLocale, setLocale, onLocaleChange } from "./i18n";
+  import { invoke } from "./ipc";
   import PressButton from "./PressButton.svelte";
 
   let {
@@ -17,6 +19,89 @@
   // Local-only state (thresholds live in config.toml, SPEC Part C §3.8).
   let minBytes = $state<"50" | "100" | "500">("100");
   let theme = $state<"system" | "light" | "dark">("system");
+
+  // ── 模型 section (R3) — lives in config.toml, SPEC Part C §3.9 ────────────
+  // Loaded from get_model_config on sheet open; saved through save_model_config.
+  // The API key never leaves the host (P4): only `has_key` comes back, and a
+  // blank key field on save means "keep the existing key" (Rust: None).
+  interface ModelConfigDto {
+    endpoint: string;
+    has_key: boolean;
+    model: string;
+    ctx_len: number;
+    thinking: boolean;
+    budget: { cost_usd: number; max_turns: number; tokens: number };
+  }
+
+  let model = $state<ModelConfigDto | null>(null); // null = still loading
+  let endpoint = $state("");
+  let apiKey = $state("");
+  let modelName = $state("");
+  let ctxLen = $state("");
+  let budgetUsd = $state("");
+  let thinking = $state(false);
+  let saving = $state(false);
+  let savedFlash = $state(false);
+  let modelError = $state("");
+
+  onMount(() => {
+    invoke<ModelConfigDto>("get_model_config", {})
+      .then((c) => {
+        model = c;
+        endpoint = c.endpoint ?? "";
+        modelName = c.model ?? "";
+        ctxLen = c.ctx_len != null ? String(c.ctx_len) : "";
+        budgetUsd = c.budget?.cost_usd != null ? String(c.budget.cost_usd) : "";
+        thinking = !!c.thinking;
+      })
+      .catch((e) => {
+        modelError = String(e);
+      });
+  });
+
+  async function saveModel() {
+    const cur = model;
+    if (!cur || saving) return;
+    modelError = "";
+    savedFlash = false;
+
+    const ctx = Number(ctxLen);
+    if (ctxLen.trim() === "" || !Number.isInteger(ctx) || ctx < 0) {
+      modelError = t("settings.model_ctx_invalid");
+      return;
+    }
+    const usd = Number(budgetUsd);
+    if (budgetUsd.trim() === "" || !Number.isFinite(usd) || usd < 0) {
+      modelError = t("settings.model_budget_invalid");
+      return;
+    }
+
+    const key = apiKey.trim(); // blank ⇒ keep the existing key (Rust: None)
+    saving = true;
+    try {
+      await invoke("save_model_config", {
+        endpoint,
+        apiKey: key === "" ? null : key,
+        model: modelName,
+        ctxLen: ctx,
+        thinking,
+        budget: {
+          cost_usd: usd,
+          // Demo/partial DTOs may lack budget rows — fall back to Config defaults.
+          max_turns: cur.budget?.max_turns ?? 12,
+          tokens: cur.budget?.tokens ?? 200_000,
+        },
+      });
+      if (key !== "") cur.has_key = true;
+      apiKey = "";
+      savedFlash = true;
+      setTimeout(() => (savedFlash = false), 2400);
+    } catch (e) {
+      modelError = String(e);
+    } finally {
+      saving = false;
+    }
+  }
 
   // Exit runs 20% faster than enter (220ms × 0.8 ≈ 180ms): flip the transform,
   // let the transition finish, then let onclose unmount the sheet.
@@ -90,6 +175,96 @@
           </div>
 
           <div class="sub">{t("settings.m4_hint")}</div>
+        </section>
+
+        <section class="group">
+          <h3 class="g-label">{t("settings.model")}</h3>
+
+          <div class="row">
+            <span class="row-label">{t("settings.model_endpoint")}</span>
+            <input
+              class="field mono"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="https://api.deepseek.com/v1"
+              bind:value={endpoint}
+            />
+          </div>
+
+          <div class="row">
+            <span class="row-label">{t("settings.model_apikey")}</span>
+            <input
+              class="field"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder={model?.has_key ? t("settings.model_apikey_set") : t("settings.model_apikey_unset")}
+              bind:value={apiKey}
+            />
+          </div>
+
+          <div class="row">
+            <span class="row-label">{t("settings.model_name")}</span>
+            <input
+              class="field mono"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              bind:value={modelName}
+            />
+          </div>
+
+          <div class="row">
+            <span class="row-label">{t("settings.model_ctx")}</span>
+            <input
+              class="field num"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={ctxLen}
+            />
+          </div>
+
+          <div class="row">
+            <span class="row-label">{t("settings.model_thinking")}</span>
+            <div class="seg" role="group" aria-label={t("settings.model_thinking")}>
+              <span class="seg-tab" class:active={thinking}>
+                <PressButton kind="ghost" label={t("settings.model_thinking_on")} onpress={() => (thinking = true)} />
+              </span>
+              <span class="seg-tab" class:active={!thinking}>
+                <PressButton kind="ghost" label={t("settings.model_thinking_off")} onpress={() => (thinking = false)} />
+              </span>
+            </div>
+          </div>
+
+          <div class="row">
+            <span class="row-label">{t("settings.model_budget")}</span>
+            <input
+              class="field num"
+              type="text"
+              inputmode="decimal"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={budgetUsd}
+            />
+          </div>
+
+          <div class="save-row">
+            <PressButton
+              kind="primary"
+              label={t("common.save")}
+              disabled={!model || saving}
+              onpress={saveModel}
+            />
+            {#if savedFlash}
+              <PressButton kind="ghost" label={t("settings.model_saved")} />
+            {/if}
+          </div>
+          {#if modelError}
+            <div class="err" role="alert">{modelError}</div>
+          {/if}
         </section>
 
         <section class="group">
@@ -297,6 +472,36 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
+  }
+
+  /* 模型 section — text/number inputs ride the global input style (surface bg,
+     hairline ring, focus-visible accent); these only size/align them. */
+  .field {
+    width: 220px;
+    min-width: 0;
+    font-size: 13px;
+  }
+  .field.mono {
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .field.num {
+    text-align: right;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .save-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .err {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--danger);
+    line-height: 1.5;
+    word-break: break-word;
   }
 
   /* explicit light/dark override (app.css only handles system mode) */

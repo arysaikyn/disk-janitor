@@ -75,10 +75,56 @@
   // D-29: countdown ticks from ledger-recorded grace_expires_at only.
   let now = $state(Date.now());
 
+  // R5: saved agent sessions — read-only trajectory history view (no replay).
+  interface SessionMeta {
+    run_id: string;
+    saved_at: string;
+    turns: number;
+    cost_usd: number;
+  }
+  interface TrajMsg {
+    role: "system" | "user" | "assistant" | "tool";
+    content: string;
+    tool_calls?: { id: string; name: string; arguments: unknown }[];
+  }
+  interface Trajectory {
+    run_id: string;
+    saved_at: string;
+    model: string;
+    budget: { turns: number; prompt_tokens: number; completion_tokens: number; cost_usd: number };
+    history: TrajMsg[];
+  }
+
+  let sessions = $state<SessionMeta[]>([]);
+  let sessLoading = $state(true);
+  let sessErr = $state<string | null>(null);
+  let traj = $state<Trajectory | null>(null);
+  let trajErr = $state<string | null>(null);
+
+  async function loadSessions() {
+    try {
+      const rows = (await invoke("get_agent_sessions")) as SessionMeta[] | Record<string, unknown>;
+      sessions = Array.isArray(rows) ? rows : [];
+    } catch (e) {
+      sessErr = String(e);
+    }
+    sessLoading = false;
+  }
+
+  async function openTraj(runId: string) {
+    trajErr = null;
+    try {
+      traj = (await invoke("get_agent_trajectory", { runId })) as Trajectory;
+    } catch (e) {
+      traj = null;
+      trajErr = String(e);
+    }
+  }
+
   let timer: ReturnType<typeof setInterval> | undefined;
   onMount(async () => {
     timer = setInterval(() => (now = Date.now()), 60_000);
-    await refresh();
+    await Promise.all([refresh(), loadSessions()]);
   });
   onDestroy(() => {
     if (timer) clearInterval(timer);
@@ -364,6 +410,79 @@
   {/if}
 </div>
 
+<!-- R5: 轨迹 Trajectory — saved agent sessions, read-only history view -->
+<div class="traj">
+  <div class="group-head">
+    {t("ledger.traj_title")}
+    {#if traj}
+      <button class="traj-x" onclick={() => (traj = null)}>{t("ledger.traj_close")}</button>
+    {/if}
+  </div>
+  {#if sessErr}
+    <div class="refusal">
+      <span class="rdot"></span>
+      <div class="rt-body">
+        <span class="mono">{sessErr}</span>
+      </div>
+    </div>
+  {:else if !sessLoading && sessions.length === 0}
+    <EmptyState title={t("ledger.traj_empty")} hint={t("ledger.traj_empty_hint")} />
+  {:else}
+    <div class="sess-list">
+      {#each sessions as s (s.run_id)}
+        <button
+          class="sess-row"
+          class:active={traj?.run_id === s.run_id}
+          onclick={() => openTraj(s.run_id)}
+        >
+          <span class="sess-id mono num">{s.run_id.slice(0, 8)}</span>
+          <span class="sess-meta num">{fmtTs(s.saved_at)}</span>
+          <span class="num">{s.turns} {t("ledger.calls")}</span>
+          <span class="cost num">${s.cost_usd.toFixed(4)}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  {#if trajErr}
+    <div class="refusal">
+      <span class="rdot"></span>
+      <div class="rt-body">
+        <span class="mono">{trajErr}</span>
+      </div>
+    </div>
+  {/if}
+  {#if traj}
+    <div class="traj-body">
+      <div class="traj-meta mono">
+        {traj.run_id} · {traj.model} · {fmtTs(traj.saved_at)}
+      </div>
+      {#each traj.history as m, i (i)}
+        <div class="tmsg">
+          <span class="tbadge {m.role}">{t(`ledger.traj_${m.role}`)}</span>
+          <div class="tcontent">
+            {#if m.tool_calls?.length}
+              <div class="tcalls mono">
+                {#each m.tool_calls as tc}
+                  <div>→ {tc.name}({JSON.stringify(tc.arguments)})</div>
+                {/each}
+              </div>
+            {/if}
+            {#if m.content}
+              <div>{m.content}</div>
+            {/if}
+          </div>
+        </div>
+      {/each}
+      <div class="traj-budget num">
+        {t("ledger.traj_budget")} · {traj.budget.turns} {t("ledger.calls")} ·{" "}
+        {traj.budget.prompt_tokens + traj.budget.completion_tokens} {t("ledger.traj_tokens")} ·
+        ${traj.budget.cost_usd.toFixed(4)}
+      </div>
+    </div>
+  {/if}
+</div>
+
 
 {/key}
 <style>
@@ -544,5 +663,119 @@
   }
   .mono {
     font-family: var(--mono);
+  }
+
+  /* R5: 轨迹 Trajectory — saved agent sessions, read-only history view */
+  .traj {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid var(--hairline);
+    padding-top: 16px;
+  }
+  .traj-x {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--mist);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 6px;
+  }
+  .traj-x:hover {
+    color: var(--text);
+  }
+  .sess-list {
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .sess-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 8px 16px;
+    border: none;
+    border-bottom: 1px solid var(--hairline);
+    background: none;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+  }
+  .sess-row:last-child {
+    border-bottom: none;
+  }
+  .sess-row:hover,
+  .sess-row.active {
+    background: var(--surface-lift);
+  }
+  .sess-id {
+    color: var(--mist);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .sess-meta {
+    color: var(--mist);
+    font-size: 11px;
+    flex: 1;
+  }
+  .traj-body {
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .traj-meta {
+    font-size: 10px;
+    color: var(--mist);
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .tmsg {
+    display: flex;
+    gap: 10px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--hairline);
+    font-size: 12px;
+  }
+  .tmsg:last-child {
+    border-bottom: none;
+  }
+  .tbadge {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--mist);
+    width: 52px;
+  }
+  .tbadge.user {
+    color: var(--grade-pure);
+  }
+  .tbadge.assistant {
+    color: var(--grade-rebuild);
+  }
+  .tbadge.tool {
+    color: var(--grade-expensive);
+  }
+  .tcontent {
+    flex: 1;
+    min-width: 0;
+    color: var(--mist);
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .tcalls {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+  }
+  .traj-budget {
+    padding: 8px 16px;
+    font-size: 11px;
+    color: var(--grade-expensive);
+    border-top: 1px solid var(--hairline);
+    font-variant-numeric: tabular-nums;
   }
 </style>

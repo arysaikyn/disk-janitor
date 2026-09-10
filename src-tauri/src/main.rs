@@ -20,6 +20,7 @@ fn main() {
             }
         }))
         .manage(commands::ScanState { demo, ..Default::default() })
+        .manage(commands::AgentState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::is_demo,
@@ -32,7 +33,13 @@ fn main() {
             commands::purge_plan,
             commands::restore_op,
             commands::get_ledger_tail,
+            commands::get_agent_sessions,
+            commands::get_agent_trajectory,
+            commands::run_agent,
+            commands::cancel_agent,
             commands::recover_on_launch,
+            commands::get_model_config,
+            commands::save_model_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

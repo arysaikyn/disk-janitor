@@ -9,8 +9,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use disk_janitor::agent::{
-    self, ChatClient, ModelReply, Msg, Role, RunSnapshot, RunState, StopReason, ToolCall, ToolDef,
-    ToolMsg, ToolOutput, Usage,
+    self, ChatClient, ModelReply, Msg, ProgressEvent, ProgressPhase, Role, RunSnapshot, RunState,
+    StopReason, ToolCall, ToolDef, ToolMsg, ToolOutput, Usage,
 };
 use disk_janitor::config::{Budget, ModelPrice};
 use disk_janitor::ledger::{self, Kind, LedgerRecord};
@@ -769,4 +769,283 @@ fn cost_of_splits_hit_miss_completion() {
     };
     // (2M − 1M)·0.27 + 1M·0.07 + 1M·1.10, per 1M = 0.27 + 0.07 + 1.10 = 1.44
     assert!((agent::cost_of(&u, &p) - 1.44).abs() < 1e-9);
+}
+
+// --- R4: live progress streaming + interrupt -----------------------------------------
+
+/// Collect the run's ProgressEvents through a callback (the exact wiring the
+/// CLI/GUI drivers use), so sequence/turn/budget assertions stay readable.
+fn collect_progress(
+    run: &mut agent::AgentRun,
+) -> std::sync::Arc<std::sync::Mutex<Vec<ProgressEvent>>> {
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&events);
+    run.on_progress(Some(Box::new(move |ev: &ProgressEvent| {
+        seen.lock().unwrap().push(ev.clone());
+    })));
+    events
+}
+
+fn phase_names(events: &[ProgressEvent]) -> Vec<String> {
+    events
+        .iter()
+        .map(|e| {
+            serde_json::to_value(e.phase)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+/// R4: `on_progress` fires model_call → tool_exec → model_call → done in order,
+/// carrying the running turn and cumulative budget; the wire shape serializes to
+/// the snake_case tags the GUI consumes (`"phase":"model_call"`, nested budget).
+#[test]
+fn progress_events_stream_model_tool_done() {
+    let home = tempfile::tempdir().unwrap();
+    let mut run = agent::AgentRun::new(
+        "progress test",
+        "test-model",
+        vec![price()],
+        Budget::default(),
+    );
+    let client = StubClient::new(vec![
+        Box::new(|_| tool_call("scan_summary", "t1", json!({}))),
+        Box::new(|_| final_text("done")),
+    ]);
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+    let events = collect_progress(&mut run);
+
+    loop {
+        match run.step(&client).expect("stub never errors") {
+            RunState::CallTools { calls } => {
+                run.execute_tools(&calls, &mut ctx);
+            }
+            RunState::Done { .. } => break,
+            RunState::CallModel { .. } => unreachable!("step never returns CallModel"),
+        }
+    }
+    run.finish(&mut ctx).unwrap();
+
+    let evs = events.lock().unwrap();
+    assert_eq!(
+        phase_names(&evs),
+        ["model_call", "tool_exec", "model_call", "done"],
+        "exact R4 event sequence"
+    );
+
+    // Turn 1 model call: before the call, so the budget is still zero.
+    let m1 = &evs[0];
+    assert_eq!(
+        (m1.turn, m1.phase, m1.tool.as_deref()),
+        (1, ProgressPhase::ModelCall, None)
+    );
+    assert_eq!((m1.budget.tokens, m1.budget.cost_usd), (0, 0.0));
+    // Wire shape: snake_case phase tag + nested budget object.
+    let wire = serde_json::to_value(m1).unwrap();
+    assert_eq!(wire["phase"], "model_call");
+    assert_eq!(wire["budget"]["tokens"], 0);
+
+    // Tool exec: same turn, names the tool, budget already counts the first call.
+    let t = &evs[1];
+    assert_eq!((t.turn, t.phase), (1, ProgressPhase::ToolExec));
+    assert_eq!(t.tool.as_deref(), Some("scan_summary"));
+    assert!(t.detail.contains("scan_summary"));
+    assert_eq!(t.budget.tokens, 50, "USAGE 40+10 folded in after the call");
+
+    // Done: last turn, cumulative budget for both calls, stop reason in detail.
+    let d = &evs[3];
+    assert_eq!((d.turn, d.phase), (2, ProgressPhase::Done));
+    assert!(d.detail.contains("ModelStop"), "detail: {}", d.detail);
+    assert_eq!(d.budget.tokens, 100);
+    let expected_cost = 2.0 * agent::cost_of(&USAGE, &price());
+    assert!((d.budget.cost_usd - expected_cost).abs() < 1e-12);
+}
+
+/// R4: cancel() mid-run → Done{UserCancel} fires a `done` event, and the next
+/// step() returns Done WITHOUT touching the model (the script stays unconsumed)
+/// — the run stops before the next model call.
+#[test]
+fn cancel_mid_run_stops_before_next_model_call() {
+    let home = tempfile::tempdir().unwrap();
+    let mut run = agent::AgentRun::new(
+        "cancel test",
+        "test-model",
+        vec![price()],
+        Budget::default(),
+    );
+    let client = StubClient::new(vec![
+        Box::new(|_| tool_call("scan_summary", "t1", json!({}))),
+        Box::new(|_| final_text("never called")),
+    ]);
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+    let events = collect_progress(&mut run);
+
+    // Turn 1: one model call + one tool execution, then cancel between turns.
+    let st = run.step(&client).expect("stub");
+    let RunState::CallTools { calls } = st else {
+        panic!("expected CallTools after turn 1, got {st:?}");
+    };
+    run.execute_tools(&calls, &mut ctx);
+    assert_eq!(client.len(), 1, "one reply remains before cancel");
+    run.cancel();
+    assert_eq!(
+        run.state(),
+        &RunState::Done {
+            reason: StopReason::UserCancel
+        }
+    );
+
+    // The next step must NOT consume the remaining script reply.
+    let st = run.step(&client).expect("stub");
+    assert!(matches!(st, RunState::Done { .. }));
+    assert_eq!(
+        run.state(),
+        &RunState::Done {
+            reason: StopReason::UserCancel
+        }
+    );
+    assert_eq!(
+        client.len(),
+        1,
+        "cancelled run must not call the model again"
+    );
+
+    // Exactly model_call → tool_exec → done(user_cancel), budget = one turn.
+    let evs = events.lock().unwrap();
+    assert_eq!(phase_names(&evs), ["model_call", "tool_exec", "done"]);
+    let d = evs.last().unwrap();
+    assert_eq!(d.phase, ProgressPhase::Done);
+    assert!(d.detail.contains("UserCancel"), "detail: {}", d.detail);
+    assert_eq!(d.budget.tokens, 50, "one turn ran before cancel");
+}
+
+// --- R5: session save/load -----------------------------------------------------------
+
+/// R5: persist_snapshot writes `<dir>/<run_id>.json` atomically (WAL protocol);
+/// load_snapshot round-trips state/budget/history exactly, and the resumed run
+/// continues the loop from the restored `RunState` (SPEC §3.7).
+#[test]
+fn persist_load_snapshot_round_trips_and_resumes() {
+    let home = tempfile::tempdir().unwrap();
+    let sess_dir = home.path().join("sessions");
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+
+    // Drive the run through ONE model call + tool exec, leaving it mid-run
+    // (CallModel{turn:2}) — the interesting resume point.
+    let mut run = agent::AgentRun::new(
+        "persist mid-run",
+        "test-model",
+        vec![price()],
+        Budget::default(),
+    );
+    let client1 = StubClient::new(vec![Box::new(|_| {
+        tool_call("scan_summary", "call-1", json!({}))
+    })]);
+    assert_eq!(run.next_step(), RunState::CallModel { turn: 1 });
+    run.feed_reply(
+        client1
+            .complete(run.history(), &agent::tool_defs())
+            .unwrap(),
+    );
+    let calls = match run.next_step() {
+        RunState::CallTools { calls } => calls,
+        s => panic!("expected CallTools, got {s:?}"),
+    };
+    run.execute_tools(&calls, &mut ctx);
+    assert_eq!(run.state(), &RunState::CallModel { turn: 2 });
+
+    // Persist → load → field-level round-trip equality (state, budget, history).
+    // The file is the single source of truth: persist took its own snapshot.
+    let path = run.persist_snapshot(&sess_dir).unwrap();
+    assert_eq!(
+        path.file_name().unwrap(),
+        format!("{}.json", run.run_id()).as_str(),
+        "file name is <run_id>.json"
+    );
+    let file: RunSnapshot = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(file.run_id, run.run_id().to_string());
+    assert_eq!(
+        file.state,
+        *run.state(),
+        "file state matches the run at persist time"
+    );
+    assert_eq!(file.history, run.history());
+    assert_eq!(file.budget.turns, run.budget().turns);
+    assert_eq!(file.budget.cost_usd, run.budget().cost_usd);
+
+    let mut run2 = agent::load_snapshot(&path).unwrap();
+    assert_eq!(run2.run_id(), run.run_id());
+    assert_eq!(run2.state(), run.state());
+    assert_eq!(run2.history(), run.history());
+    assert_eq!(run2.budget().turns, file.budget.turns);
+    assert_eq!(run2.budget().cost_usd, file.budget.cost_usd);
+    assert_eq!(run2.budget().cap.max_turns, file.budget.cap.max_turns);
+
+    // Resume continues: one more tool turn → record_verdict → Done, with the
+    // pre-resume history intact.
+    let client2 = StubClient::new(vec![Box::new(|_| {
+        tool_call("record_verdict", "call-2", json!({"verdict": "ok"}))
+    })]);
+    let (done, _) = drive(&mut run2, &client2, &mut ctx);
+    assert_eq!(
+        done,
+        RunState::Done {
+            reason: StopReason::RequestedByTool
+        }
+    );
+    assert_eq!(
+        run2.history().len(),
+        run.history().len() + 2,
+        "resumed run continued from the restored state"
+    );
+    assert_eq!(run2.history()[0].role, Role::System);
+    assert_eq!(run2.history()[1].content, "persist mid-run");
+}
+
+/// R5 wire contract: the persisted file carries exactly the keys the GUI
+/// trajectory view renders (Ledger.svelte `Trajectory`/`TrajMsg` interfaces).
+#[test]
+fn snapshot_json_has_trajectory_fields() {
+    let home = tempfile::tempdir().unwrap();
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+    let mut run =
+        agent::AgentRun::new("shape test", "test-model", vec![price()], Budget::default());
+    let client = StubClient::new(vec![
+        Box::new(|_| tool_call("scan_summary", "call-1", json!({}))),
+        Box::new(|_| tool_call("record_verdict", "call-2", json!({"verdict": "ok"}))),
+    ]);
+    drive(&mut run, &client, &mut ctx);
+    let path = run.persist_snapshot(&home.path().join("sessions")).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for key in ["run_id", "saved_at", "model", "state", "budget", "history"] {
+        assert!(v.get(key).is_some(), "missing snapshot key {key}");
+    }
+    assert!(
+        v["saved_at"].as_str().is_some(),
+        "saved_at must be an RFC 3339 string"
+    );
+    for key in ["turns", "prompt_tokens", "completion_tokens", "cost_usd"] {
+        assert!(v["budget"].get(key).is_some(), "missing budget key {key}");
+    }
+    let h = v["history"].as_array().expect("history is an array");
+    // Assistant messages carry the model's tool calls (name + parsed arguments).
+    let assistant = h
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("assistant msg");
+    let tc = assistant["tool_calls"]
+        .as_array()
+        .expect("assistant tool_calls");
+    assert_eq!(tc[0]["name"], "scan_summary");
+    assert!(tc[0]["arguments"].is_object(), "arguments is parsed JSON");
+    // Tool messages carry the chokepoint-serialized result + the call id.
+    let tool = h.iter().find(|m| m["role"] == "tool").expect("tool msg");
+    assert!(
+        tool["content"].as_str().is_some(),
+        "tool result content is a string"
+    );
+    assert_eq!(tool["tool_call_id"], "call-1");
 }

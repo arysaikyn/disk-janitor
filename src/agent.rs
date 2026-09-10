@@ -17,8 +17,11 @@
 //! is the canonical leak set used by the CI tests (module `leak_tests` + `tests/agent_tests.rs`).
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Budget, ModelPrice};
@@ -273,11 +276,63 @@ pub struct SessionCtx {
     pub last_plan_bytes: Option<u64>,
 }
 
+// --- progress streaming (R4) ---------------------------------------------------------
+
+/// Phase of a live run (R4: tasks >3s must stream progress; §3.7 streams a
+/// trajectory for the GUI Agent panel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressPhase {
+    /// About to make one model call (`turn` is the call being started).
+    ModelCall,
+    /// One tool call finished executing (`tool` names it).
+    ToolExec,
+    /// The run reached a terminal state (`detail` carries the stop reason).
+    Done,
+}
+
+/// The snake_case wire tag (`"model_call"` / `"tool_exec"` / `"done"`) — the
+/// same spelling `serde` emits, for human progress lines.
+impl std::fmt::Display for ProgressPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ProgressPhase::ModelCall => "model_call",
+            ProgressPhase::ToolExec => "tool_exec",
+            ProgressPhase::Done => "done",
+        })
+    }
+}
+
+/// Snapshot of the running budget at the moment of an event (the interrupt gauge).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProgressBudget {
+    pub tokens: u64,
+    pub cost_usd: f64,
+}
+
+/// One live-progress event streamed out of a run (R4). Serialized verbatim by
+/// the `--json-events` CLI flag and the GUI channel; `detail` is human-readable
+/// and already redacted (it may echo model-influenced text — never paths).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressEvent {
+    /// Turn number: the model call being started (model_call) or the turn that
+    /// produced the tool calls (tool_exec); the last completed turn at done.
+    pub turn: u32,
+    pub phase: ProgressPhase,
+    pub tool: Option<String>,
+    pub detail: String,
+    pub budget: ProgressBudget,
+}
+
 // --- the run -----------------------------------------------------------------------
 
 /// sans-IO agent run (rig-run pattern). Drive with `step` (or manually:
 /// `next_step` → if CallModel, `client.complete` + `feed_reply` → if CallTools,
 /// `execute_tools` — until Done), then `finish` once to persist the budget record.
+/// R4 progress callback type — fired at model calls, tool executions, and terminal
+/// transitions. `None` keeps the driver silent.
+pub type ProgressHook = Box<dyn Fn(&ProgressEvent) + Send + Sync>;
+
 pub struct AgentRun {
     run_id: String,
     model: String,
@@ -290,6 +345,10 @@ pub struct AgentRun {
     tool_attempts: HashMap<u64, u32>,
     ledger_posted: bool,
     prices: Vec<ModelPrice>,
+    /// R4 progress callback — fired by `step`/`execute_tools`/`cancel` at every
+    /// model call, tool execution, and terminal transition. `None` (the default)
+    /// keeps every existing driver silent.
+    progress: Option<ProgressHook>,
 }
 
 const SYSTEM_PROMPT: &str = "You are the reclaim agent of a disk-reclamation tool. \
@@ -325,6 +384,7 @@ impl AgentRun {
             tool_attempts: HashMap::new(),
             ledger_posted: false,
             prices,
+            progress: None,
         }
     }
 
@@ -346,6 +406,83 @@ impl AgentRun {
 
     pub fn budget(&self) -> &BudgetState {
         &self.budget
+    }
+
+    /// R4: register (or clear, with `None`) the live-progress callback. Fired
+    /// synchronously from `step`/`execute_tools`/`cancel` at every model call,
+    /// tool execution, and terminal transition. Default `None` — existing
+    /// drivers are untouched until they opt in.
+    pub fn on_progress(&mut self, cb: Option<ProgressHook>) {
+        self.progress = cb;
+    }
+
+    fn fire(&self, ev: &ProgressEvent) {
+        if let Some(cb) = &self.progress {
+            cb(ev);
+        }
+    }
+
+    /// One `Done` event carrying the stop reason — fired exactly once per
+    /// terminal transition (a no-op while the run is not Done).
+    fn fire_done(&self) {
+        let reason = match self.state {
+            RunState::Done { reason } => reason,
+            _ => return,
+        };
+        let b = &self.budget;
+        self.fire(&ProgressEvent {
+            turn: b.turns,
+            phase: ProgressPhase::Done,
+            tool: None,
+            detail: format!("stop_reason: {reason:?}"),
+            budget: ProgressBudget {
+                tokens: b.tokens,
+                cost_usd: b.cost_usd,
+            },
+        });
+    }
+
+    /// One-line, already-redacted human summary of a tool execution (R4 stream).
+    fn tool_event_detail(name: &str, out: &ToolOutput) -> String {
+        match out {
+            ToolOutput::ScanSummary {
+                volumes,
+                files,
+                bytes,
+                candidates,
+                recoverable_bytes,
+            } => {
+                format!(
+                    "{name}: {volumes} vols, {files} files, {bytes} B, {candidates} candidates, {recoverable_bytes} B recoverable"
+                )
+            }
+            ToolOutput::Candidates { items } => format!("{name}: {} candidates", items.len()),
+            ToolOutput::PlanBuilt {
+                plan_id,
+                quarantine_entries,
+                quarantine_bytes,
+                refused,
+                ..
+            } => {
+                format!(
+                    "{name}: plan {plan_id}, {quarantine_entries} entries / {quarantine_bytes} B, {refused} refused"
+                )
+            }
+            ToolOutput::Proposed {
+                plan_id,
+                bytes,
+                awaiting,
+            } => {
+                format!("{name}: plan {plan_id} proposed ({bytes} B), {awaiting}")
+            }
+            ToolOutput::RestoreProposed { op_id, awaiting } => {
+                format!("{name}: op {op_id} proposed, {awaiting}")
+            }
+            ToolOutput::Receipts { items } => format!("{name}: {} receipts", items.len()),
+            ToolOutput::VerdictRecorded { verdict, .. } => format!("{name}: verdict={verdict}"),
+            // `message` can echo model-influenced text (unknown tool names) — scrub.
+            ToolOutput::Error { message } => format!("{name}: error — {}", scrub_text(message)),
+        }
     }
 
     /// Pure transition: applies budget/stop pre-checks at a CallModel boundary. Returns
@@ -450,6 +587,17 @@ impl AgentRun {
                 name: call.name.clone(),
                 content,
             });
+            let b = &self.budget;
+            self.fire(&ProgressEvent {
+                turn: b.turns,
+                phase: ProgressPhase::ToolExec,
+                tool: Some(call.name.clone()),
+                detail: Self::tool_event_detail(&call.name, &out),
+                budget: ProgressBudget {
+                    tokens: b.tokens,
+                    cost_usd: b.cost_usd,
+                },
+            });
         }
         if !matches!(self.state, RunState::Done { .. }) {
             self.state = if stop_requested {
@@ -462,27 +610,63 @@ impl AgentRun {
                 }
             };
         }
+        // Done was reached inside this call (RequestedByTool / ToolFailLoop) —
+        // the entry guard above guarantees no double-fire on a re-entry.
+        if matches!(self.state, RunState::Done { .. }) {
+            self.fire_done();
+        }
         msgs
     }
 
     /// One full loop iteration: pure transition, then the model call if needed.
     /// Returns the resulting state (Done → the driver should call `finish`).
+    ///
+    /// R4: fires the progress callback (model_call before the call, done on the
+    /// terminal transition) and never touches the model once the run is Done —
+    /// `cancel()` mid-run therefore stops before the next model call.
     pub fn step(&mut self, client: &dyn ChatClient) -> Result<RunState, AgentError> {
+        if matches!(self.state, RunState::Done { .. }) {
+            return Ok(self.state.clone());
+        }
         match self.next_step() {
-            RunState::CallModel { .. } => {
+            RunState::CallModel { turn } => {
+                let b = &self.budget;
+                self.fire(&ProgressEvent {
+                    turn,
+                    phase: ProgressPhase::ModelCall,
+                    tool: None,
+                    detail: "model call".to_string(),
+                    budget: ProgressBudget {
+                        tokens: b.tokens,
+                        cost_usd: b.cost_usd,
+                    },
+                });
                 let reply = client.complete(&self.history, &tool_defs())?;
-                Ok(self.feed_reply(reply))
+                let out = self.feed_reply(reply);
+                if matches!(out, RunState::Done { .. }) {
+                    self.fire_done();
+                }
+                Ok(out)
             }
-            other => Ok(other),
+            other => {
+                // Only reachable when next_step just flipped CallModel → Done
+                // on a budget stop (a pre-existing Done is caught above).
+                if matches!(other, RunState::Done { .. }) {
+                    self.fire_done();
+                }
+                Ok(other)
+            }
         }
     }
 
     /// Ctrl-C path — marks the run Done{UserCancel} (WAL-consistent, SPEC §3.2).
+    /// R4: also fires the `done` progress event so live consumers see the stop.
     pub fn cancel(&mut self) {
         if !matches!(self.state, RunState::Done { .. }) {
             self.state = RunState::Done {
                 reason: StopReason::UserCancel,
             };
+            self.fire_done();
         }
     }
 
@@ -491,6 +675,7 @@ impl AgentRun {
     pub fn snapshot(&self) -> RunSnapshot {
         RunSnapshot {
             run_id: self.run_id.clone(),
+            saved_at: Utc::now(),
             model: self.model.clone(),
             state: self.state.clone(),
             budget: self.budget.clone(),
@@ -499,6 +684,22 @@ impl AgentRun {
             ledger_posted: self.ledger_posted,
             prices: self.prices.clone(),
         }
+    }
+
+    /// R5 session save: atomically persist the snapshot to `<dir>/<run_id>.json`
+    /// (tempfile + fsync + rename in the same dir — the WAL protocol, SPEC §3.7;
+    /// sessions are per-run, so no cross-process lock is needed). Returns the path.
+    pub fn persist_snapshot(&self, dir: &Path) -> anyhow::Result<PathBuf> {
+        let dir = dir.to_path_buf();
+        fs_err::create_dir_all(&dir)?;
+        let path = dir.join(format!("{}.json", self.run_id));
+        let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
+        tmp.write_all(&serde_json::to_vec_pretty(&self.snapshot())?)?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(&path)?;
+        // The rename replaced the inode; sync the parent dir so the entry is durable.
+        std::fs::File::open(&dir)?.sync_all()?;
+        Ok(path)
     }
 
     /// When the run has ended (any Done), append the run's verdict (if the
@@ -586,6 +787,8 @@ impl AgentRun {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSnapshot {
     pub run_id: String,
+    /// When this snapshot was taken (RFC 3339) — the Ledger sorts sessions by it.
+    pub saved_at: DateTime<Utc>,
     pub model: String,
     pub state: RunState,
     pub budget: BudgetState,
@@ -607,8 +810,18 @@ impl RunSnapshot {
             tool_attempts: HashMap::new(),
             ledger_posted: self.ledger_posted,
             prices: self.prices,
+            // R4: a resumed run starts silent — the caller re-registers the callback.
+            progress: None,
         }
     }
+}
+
+/// R5 session load: read a saved snapshot file (`<sessions>/<run_id>.json`) and
+/// resume the run from its exact `RunState` (SPEC §3.7 — `janitor agent --resume`).
+pub fn load_snapshot(path: &Path) -> anyhow::Result<AgentRun> {
+    let bytes = fs_err::read(path)?;
+    let snap: RunSnapshot = serde_json::from_slice(&bytes)?;
+    Ok(snap.resume())
 }
 
 // --- cost accounting ----------------------------------------------------------------

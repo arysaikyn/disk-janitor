@@ -7,6 +7,11 @@ description = "还我磁盘 Giveback — Tauri shell over the disk_janitor core 
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
 
+[features]
+# Live agent runs (R4): pulls the root crate's HTTP ChatClient stack. Without
+# it `run_agent` compiles and errors at runtime — the command surface stays up.
+llm = ["disk_janitor/llm"]
+
 [dependencies]
 disk_janitor = { path = ".." }
 tauri = { version = "=2.11.5", features = [] }
@@ -20,4 +25,6 @@ crossbeam-channel = "0.5.16"
 uuid = { version = "1.26.0", features = ["v4"] }
 dirs = "6.0.0"
 parking_lot = "0.12.5"
+toml = "0.9"                      # R3: Settings UI → config.toml serialization
+tempfile = "3.27.0"               # R3: atomic config write (same-dir temp + rename)
 

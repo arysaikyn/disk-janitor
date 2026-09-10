@@ -1,6 +1,7 @@
 //! Named IPC commands (SPEC Part C §2.3): ~10 commands, typed payloads, no raw fs.
 //! Scan/apply progress cross the boundary via `tauri::ipc::Channel<T>`.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -576,6 +577,328 @@ pub async fn get_ledger_tail(
     Ok(tail)
 }
 
+/// One saved agent session, as listed by the 台账 Trajectory section (R5).
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMeta {
+    pub run_id: String,
+    /// Snapshot timestamp (RFC 3339, `RunSnapshot.saved_at`).
+    pub saved_at: String,
+    /// Model calls made so far (`budget.turns`).
+    pub turns: u32,
+    /// Cumulative spend in USD (`budget.cost_usd`).
+    pub cost_usd: f64,
+}
+
+/// R5 sessions directory — the CLI's `janitor agent` persists to the SAME dir
+/// (SPEC §3.7: `dirs::state_dir()/disk-janitor/sessions`).
+fn sessions_dir() -> Result<PathBuf, String> {
+    let state = dirs::state_dir().ok_or_else(|| "no user state dir".to_string())?;
+    Ok(state.join("disk-janitor").join("sessions"))
+}
+
+/// Saved agent sessions, newest-first (R5: the Ledger trajectory list).
+#[tauri::command]
+pub async fn get_agent_sessions(state: State<'_, ScanState>) -> Result<Vec<SessionMeta>, String> {
+    if state.demo {
+        return Ok(Vec::new());
+    }
+    let dir = sessions_dir()?;
+    let mut out: Vec<SessionMeta> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Ok(out); // no sessions yet — empty list, not an error
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let Ok(snap) = serde_json::from_slice::<disk_janitor::agent::RunSnapshot>(&bytes) else {
+            continue; // torn/foreign file — list what parses
+        };
+        let saved_at = serde_json::to_value(snap.saved_at)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        out.push(SessionMeta {
+            run_id: snap.run_id,
+            saved_at,
+            turns: snap.budget.turns,
+            cost_usd: snap.budget.cost_usd,
+        });
+    }
+    out.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
+    Ok(out)
+}
+
+/// One saved run's full trajectory for the Ledger trajectory view (R5) — the
+/// parsed `RunSnapshot` JSON (role/content history + budget; read-only, no
+/// replay execution).
+#[tauri::command]
+pub async fn get_agent_trajectory(
+    run_id: String,
+    state: State<'_, ScanState>,
+) -> Result<serde_json::Value, String> {
+    if state.demo {
+        return Err("no saved sessions in demo mode".into());
+    }
+    if run_id.is_empty()
+        || run_id.contains('/')
+        || run_id.contains('\\')
+        || run_id.contains("..")
+    {
+        return Err(format!("invalid run id: {run_id}"));
+    }
+    let path = sessions_dir()?.join(format!("{run_id}.json"));
+    let bytes = std::fs::read(&path)
+        .map_err(|_| format!("no saved session for run {run_id}"))?;
+    let snap: disk_janitor::agent::RunSnapshot =
+        serde_json::from_slice(&bytes).map_err(|e| format!("corrupt session {run_id}: {e}"))?;
+    serde_json::to_value(&snap).map_err(|e| e.to_string())
+}
+
+// ── R4: live agent runs (progress stream + interrupt) ───────────────────────
+//
+// `run_agent` mirrors the CLI's `janitor agent` (SPEC §3.7): scan JSON → seeded
+// SessionCtx → sans-IO tool loop → proposal, streaming every model call / tool
+// execution / terminal transition over a `Channel<AgentProgressMsg>`. The loop
+// runs on `spawn_blocking` (HTTP model calls block; Tauri async commands must
+// not), and `cancel_agent` flips a shared atomic the loop polls before each
+// step — cancellation lands before the next model call, exactly like Ctrl-C on
+// the CLI. `finish()` posts the Budget rec; the finished run is persisted to
+// the R5 sessions dir (same dir the CLI writes, same list the Ledger reads).
+
+/// Shared agent-run state: cancel flag + in-flight guard (mirrors `ScanState`).
+pub struct AgentState {
+    /// Set by `cancel_agent`; the run loop polls it between steps.
+    pub cancel: Arc<AtomicBool>,
+    /// True while a run is in flight (re-entry guard, same contract as `ScanGuard`).
+    pub running: AtomicBool,
+}
+
+impl Default for AgentState {
+    fn default() -> Self {
+        Self {
+            cancel: Arc::new(AtomicBool::new(false)),
+            running: AtomicBool::new(false),
+        }
+    }
+}
+
+/// RAII in-flight guard for agent runs (A2 contract): resets on every exit path.
+struct AgentGuard<'a>(&'a AtomicBool);
+
+impl<'a> AgentGuard<'a> {
+    fn acquire(flag: &'a AtomicBool) -> Result<Self, String> {
+        if flag.swap(true, Ordering::SeqCst) {
+            return Err("agent run already in progress".into());
+        }
+        Ok(Self(flag))
+    }
+}
+
+impl Drop for AgentGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// R4 wire event — a 1:1 re-map of `agent::ProgressEvent` so the IPC surface
+/// never depends on core-crate serialization details.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentProgressMsg {
+    pub turn: u32,
+    /// `"model_call"` | `"tool_exec"` | `"done"` (snake_case, as serialized).
+    pub phase: String,
+    pub tool: Option<String>,
+    pub detail: String,
+    pub budget: AgentBudgetMsg,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AgentBudgetMsg {
+    pub tokens: u64,
+    pub cost_usd: f64,
+}
+
+impl From<&disk_janitor::agent::ProgressEvent> for AgentProgressMsg {
+    fn from(ev: &disk_janitor::agent::ProgressEvent) -> Self {
+        use disk_janitor::agent::ProgressPhase;
+        let phase = match ev.phase {
+            ProgressPhase::ModelCall => "model_call",
+            ProgressPhase::ToolExec => "tool_exec",
+            ProgressPhase::Done => "done",
+        };
+        Self {
+            turn: ev.turn,
+            phase: phase.to_string(),
+            tool: ev.tool.clone(),
+            detail: ev.detail.clone(),
+            budget: AgentBudgetMsg {
+                tokens: ev.budget.tokens,
+                cost_usd: ev.budget.cost_usd,
+            },
+        }
+    }
+}
+
+/// R4 completion payload — what the webview's Agent panel shows at the end.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentSummary {
+    /// snake_case `StopReason` (e.g. `"model_stop"`, `"user_cancel"`).
+    pub stop_reason: String,
+    pub turns: u32,
+    pub tokens: u64,
+    pub cost_usd: f64,
+    /// The `build_plan`/`apply_plan` plan id the run settled on, if any.
+    pub plan_id: Option<String>,
+    /// The recorded verdict, else the final assistant text, else none.
+    pub proposal: Option<String>,
+}
+
+/// The blocking half of `run_agent` — spawned on `spawn_blocking` (R4).
+/// Compiles without the `llm` feature and errors there instead.
+fn run_agent_blocking(
+    scan_json_path: &str,
+    prompt: &str,
+    channel: Channel<AgentProgressMsg>,
+    cancel: Arc<AtomicBool>,
+) -> Result<AgentSummary, String> {
+    #[cfg(feature = "llm")]
+    {
+        use disk_janitor::agent::http::HttpChatClient;
+        use disk_janitor::agent::{self, Role, RunState};
+
+        let raw = std::fs::read_to_string(scan_json_path).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let candidates: Vec<disk_janitor::Candidate> =
+            serde_json::from_value(parsed["candidates"].clone()).map_err(|e| e.to_string())?;
+        let scan: disk_janitor::scan::ScanTotals =
+            serde_json::from_value(parsed["scan"].clone()).map_err(|e| e.to_string())?;
+
+        let cfg = disk_janitor::config::load().map_err(|e| e.to_string())?;
+        let client = HttpChatClient::new(cfg.clone()).map_err(|e| e.to_string())?;
+
+        let home = disk_janitor::execute::home_ledger_dir();
+        let ledger = disk_janitor::ledger::open(&home).map_err(|e| e.to_string())?;
+        let mut ctx = agent::SessionCtx {
+            candidates,
+            vols: scan.volumes,
+            ledger,
+            files_scanned: scan.files,
+            last_plan_id: None,
+            last_plan_bytes: None,
+        };
+        let mut run =
+            agent::AgentRun::new(prompt, &cfg.model, cfg.prices.clone(), cfg.budget.clone());
+        run.on_progress(Some(Box::new(move |ev: &agent::ProgressEvent| {
+            let _ = channel.send(AgentProgressMsg::from(ev));
+        })));
+
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                run.cancel();
+                break;
+            }
+            match run.step(&client).map_err(|e| e.to_string())? {
+                RunState::CallTools { calls } => {
+                    run.execute_tools(&calls, &mut ctx);
+                }
+                RunState::Done { .. } => break,
+                RunState::CallModel { .. } => unreachable!("step never returns CallModel"),
+            }
+        }
+        run.finish(&mut ctx).map_err(|e| e.to_string())?;
+        // R5: persist so the Ledger trajectory view can list/reload this run.
+        if let Ok(dir) = sessions_dir() {
+            let _ = run.persist_snapshot(&dir);
+        }
+
+        // plan_id + proposal from the trajectory (same scan the CLI does).
+        let mut plan_id = ctx.last_plan_id;
+        let mut proposal = None;
+        for m in run.history().iter().rev() {
+            if m.role != Role::Tool {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&m.content) else {
+                continue;
+            };
+            if plan_id.is_none()
+                && let Some(id) = v.get("plan_id").and_then(|x| x.as_str())
+            {
+                plan_id = Some(id.to_string());
+            }
+            if proposal.is_none()
+                && let Some(p) = v.get("verdict").and_then(|x| x.as_str())
+            {
+                proposal = Some(p.to_string());
+            }
+            if plan_id.is_some() && proposal.is_some() {
+                break;
+            }
+        }
+        if proposal.is_none() {
+            proposal = run
+                .history()
+                .iter()
+                .rev()
+                .find(|m| m.role == Role::Assistant && !m.content.is_empty())
+                .map(|m| m.content.clone());
+        }
+        let stop_reason = match run.state() {
+            RunState::Done { reason } => serde_json::to_value(reason)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default(),
+            _ => unreachable!("loop exits only on Done"),
+        };
+        let b = run.budget();
+        Ok(AgentSummary {
+            stop_reason,
+            turns: b.turns,
+            tokens: b.tokens,
+            cost_usd: b.cost_usd,
+            plan_id,
+            proposal,
+        })
+    }
+    #[cfg(not(feature = "llm"))]
+    {
+        let _ = (scan_json_path, prompt, channel, cancel);
+        Err("agent run needs the `llm` feature — rebuild the app with --features llm".into())
+    }
+}
+
+/// R4: live agent run over a scan JSON file, streaming `AgentProgressMsg`
+/// events over `channel` and resolving with the run summary. The loop runs on
+/// `spawn_blocking` — HTTP model calls block, Tauri async commands must not.
+#[tauri::command]
+pub async fn run_agent(
+    scan_json_path: String,
+    prompt: String,
+    channel: Channel<AgentProgressMsg>,
+    state: State<'_, AgentState>,
+) -> Result<AgentSummary, String> {
+    let _guard = AgentGuard::acquire(&state.running)?;
+    state.cancel.store(false, Ordering::SeqCst);
+    let cancel = Arc::clone(&state.cancel);
+    tauri::async_runtime::spawn_blocking(move || {
+        run_agent_blocking(&scan_json_path, &prompt, channel, cancel)
+    })
+    .await
+    .map_err(|e| format!("agent task panicked: {e}"))?
+}
+
+/// R4: set the shared cancel flag. The running loop polls it before each step,
+/// so cancellation lands before the next model call (Done{UserCancel}; the
+/// Budget rec is still posted).
+#[tauri::command]
+pub async fn cancel_agent(state: State<'_, AgentState>) -> Result<(), String> {
+    state.cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
 /// Startup recovery (§5.2): reconcile WALs, surface dangling intents + expired grace.
 #[tauri::command]
 pub async fn recover_on_launch(state: State<'_, ScanState>) -> Result<serde_json::Value, String> {
@@ -987,6 +1310,24 @@ mod demo {
         let yy = if mm <= 2 { y + 1 } else { y };
         format!("{yy:04}-{mm:02}-{dd:02}T{h:02}:{m:02}:{s:02}.{:03}Z", d.subsec_millis())
     }
+
+    /// get_model_config demo — the effective config a first-run user sees
+    /// (mirrors `Config::default()`; ipc.ts has no case, so plain-browser dev
+    /// falls back to the frontend's empty-field defaults).
+    pub fn model_config() -> super::ModelConfigDto {
+        super::ModelConfigDto {
+            endpoint: "https://api.deepseek.com/v1".into(),
+            has_key: false,
+            model: "deepseek-chat".into(),
+            ctx_len: 65_536,
+            thinking: false,
+            budget: super::ModelBudgetDto {
+                cost_usd: 1.0,
+                max_turns: 12,
+                tokens: 200_000,
+            },
+        }
+    }
 }
 
 // ── Cluster A tests: cancel/interrupt chain (A1–A4) ──────────────────────────
@@ -1276,5 +1617,268 @@ mod tests {
         );
         assert!(state.last_scan.lock().is_none(), "last_scan untouched");
         assert!(!state.scanning.load(Ordering::SeqCst), "guard released on abandon");
+    }
+}
+
+// ── R3: model config (Settings UI) ────────────────────────────────────────────
+//
+// get_model_config / save_model_config back the 模型 section of the Settings
+// sheet (SPEC Part C §3.8 → §3.9, R3: endpoint/key/model/ctx_len/thinking/
+// budget editable from the UI or config.toml). get NEVER serializes the API key
+// (P4) — the webview only learns `has_key`. save merges the payload onto the
+// CURRENT config (preserving prices and anything the UI does not edit), then
+// atomically replaces `<config_dir>/disk-janitor/config.toml`.
+
+/// Model-config DTO — the API key itself NEVER crosses the boundary (P4);
+/// `has_key` is the only key-derived signal the webview receives.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelConfigDto {
+    pub endpoint: String,
+    pub has_key: bool,
+    pub model: String,
+    pub ctx_len: u32,
+    pub thinking: bool,
+    pub budget: ModelBudgetDto,
+}
+
+/// Budget row of the model-config DTO (SPEC §3.9 R6 caps).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBudgetDto {
+    pub cost_usd: f64,
+    pub max_turns: u32,
+    pub tokens: u64,
+}
+
+/// save_model_config payload. Wire shape: top-level args arrive camelCase from
+/// the webview (Tauri renames them to the snake_case params below); the nested
+/// `budget` object is serde-deserialized verbatim, so its fields are snake_case
+/// (`cost_usd`, `max_turns`, `tokens`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveModelConfigIn {
+    pub endpoint: String,
+    /// None = keep the existing key; Some("") = clear it; Some(non-empty) = replace.
+    pub api_key: Option<String>,
+    pub model: String,
+    pub ctx_len: u32,
+    pub thinking: bool,
+    pub budget: ModelBudgetDto,
+}
+
+/// R3 read: the effective model config for the Settings UI. `Config::load()`
+/// merges config.toml over defaults and applies DISK_JANITOR_* env overrides.
+#[tauri::command]
+pub async fn get_model_config(state: State<'_, ScanState>) -> Result<ModelConfigDto, String> {
+    if state.demo {
+        return Ok(demo::model_config());
+    }
+    let cfg = disk_janitor::config::load().map_err(|e| e.to_string())?;
+    Ok(ModelConfigDto {
+        endpoint: cfg.endpoint,
+        has_key: cfg.api_key.is_some(),
+        model: cfg.model,
+        ctx_len: cfg.ctx_len,
+        thinking: cfg.thinking,
+        budget: ModelBudgetDto {
+            cost_usd: cfg.budget.cost_usd,
+            max_turns: cfg.budget.max_turns,
+            tokens: cfg.budget.tokens,
+        },
+    })
+}
+
+/// R3 write: merge the payload onto the current config, then atomically replace
+/// `<config_dir>/disk-janitor/config.toml` (tempfile + rename, dir synced —
+/// same crash-durability discipline as ledger WAL compaction).
+#[tauri::command]
+pub async fn save_model_config(
+    endpoint: String,
+    api_key: Option<String>,
+    model: String,
+    ctx_len: u32,
+    thinking: bool,
+    budget: ModelBudgetDto,
+    state: State<'_, ScanState>,
+) -> Result<(), String> {
+    if state.demo {
+        return Ok(());
+    }
+    let mut cfg = disk_janitor::config::load().map_err(|e| e.to_string())?;
+    apply_model_config(
+        &mut cfg,
+        &SaveModelConfigIn {
+            endpoint,
+            api_key,
+            model,
+            ctx_len,
+            thinking,
+            budget,
+        },
+    );
+    let path = disk_janitor::config::config_path()
+        .ok_or_else(|| "cannot determine config dir".to_string())?;
+    write_config(&cfg, &path).map_err(|e| format!("save config: {e}"))
+}
+
+/// Pure payload merge (no IO — unit-testable): apply a save request onto a
+/// loaded config. api_key: None = keep, Some("") = clear, Some(k) = replace.
+/// The endpoint is trimmed of trailing '/' (E2), matching `Config::load()`.
+fn apply_model_config(cfg: &mut disk_janitor::config::Config, inp: &SaveModelConfigIn) {
+    cfg.endpoint = disk_janitor::config::trim_endpoint(&inp.endpoint);
+    match inp.api_key.as_deref() {
+        Some("") => cfg.api_key = None,
+        Some(k) => cfg.api_key = Some(k.to_string()),
+        None => {}
+    }
+    cfg.model = inp.model.clone();
+    cfg.ctx_len = inp.ctx_len;
+    cfg.thinking = inp.thinking;
+    cfg.budget.cost_usd = inp.budget.cost_usd;
+    cfg.budget.max_turns = inp.budget.max_turns;
+    cfg.budget.tokens = inp.budget.tokens;
+}
+
+/// Serialize `cfg` to `path` atomically: mkdir -p the parent, pretty-print
+/// TOML, write a same-dir temp file, fsync it, rename over `path`, then fsync
+/// the parent dir so the new name survives a crash.
+///
+/// `Config` skips serializing `api_key` (`#[serde(skip_serializing)]`), so the
+/// key is persisted explicitly through a small wrapper — keep/clear/replace all
+/// round-trip through config.toml.
+fn write_config(cfg: &disk_janitor::config::Config, path: &Path) -> std::io::Result<()> {
+    #[derive(Serialize)]
+    struct Persisted<'a> {
+        endpoint: &'a str,
+        api_key: Option<&'a str>,
+        model: &'a str,
+        ctx_len: u32,
+        thinking: bool,
+        prices: &'a [disk_janitor::config::ModelPrice],
+        budget: &'a disk_janitor::config::Budget,
+    }
+
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "config path has no parent dir")
+    })?;
+    std::fs::create_dir_all(parent)?;
+
+    let text = toml::to_string_pretty(&Persisted {
+        endpoint: &cfg.endpoint,
+        api_key: cfg.api_key.as_deref(),
+        model: &cfg.model,
+        ctx_len: cfg.ctx_len,
+        thinking: cfg.thinking,
+        prices: &cfg.prices,
+        budget: &cfg.budget,
+    })
+    .map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("toml: {e}"))
+    })?;
+
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".config.toml.")
+        .tempfile_in(parent)?;
+    tmp.write_all(text.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    // The rename replaced the inode; sync the dir so the new name is durable.
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+// ── R3 tests: config save/load round-trip ─────────────────────────────────────
+//
+// config.rs is off-limits (core contract), so the round-trip is asserted here
+// through the EXACT production functions the command uses — apply_model_config
+// (pure merge) + write_config (persist) — then the file is parsed back as
+// `Config` and every field is checked, including the API key (which Config
+// normally skips serializing).
+#[cfg(test)]
+mod model_config_tests {
+    use super::*;
+
+    fn sample_in() -> SaveModelConfigIn {
+        SaveModelConfigIn {
+            endpoint: "https://api.example.com/v1/".into(),
+            api_key: Some("sk-test-123".into()),
+            model: "deepseek-reasoner".into(),
+            ctx_len: 131_072,
+            thinking: true,
+            budget: ModelBudgetDto {
+                cost_usd: 2.5,
+                max_turns: 20,
+                tokens: 300_000,
+            },
+        }
+    }
+
+    /// Full production path: apply a save payload, persist via write_config,
+    /// parse the file back as Config, assert every field.
+    #[test]
+    fn save_round_trips_through_config_toml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let mut cfg = disk_janitor::config::Config::default();
+        apply_model_config(&mut cfg, &sample_in());
+        write_config(&cfg, &path).expect("write config.toml");
+
+        let raw = std::fs::read_to_string(&path).expect("read back");
+        let parsed: disk_janitor::config::Config = toml::from_str(&raw).expect("parse back");
+
+        assert_eq!(
+            parsed.endpoint, "https://api.example.com/v1",
+            "trailing '/' trimmed (E2)"
+        );
+        assert_eq!(
+            parsed.api_key.as_deref(),
+            Some("sk-test-123"),
+            "key persisted"
+        );
+        assert_eq!(parsed.model, "deepseek-reasoner");
+        assert_eq!(parsed.ctx_len, 131_072);
+        assert!(parsed.thinking);
+        assert_eq!(parsed.budget.cost_usd, 2.5);
+        assert_eq!(parsed.budget.max_turns, 20);
+        assert_eq!(parsed.budget.tokens, 300_000);
+        // Prices have no UI field — the loaded config's rows must survive a save.
+        assert_eq!(parsed.prices.len(), 1, "prices preserved from loaded config");
+        assert_eq!(parsed.prices[0].model, "deepseek-chat");
+    }
+
+    /// api_key contract: None = keep existing, Some("") = clear, Some(k) = replace.
+    #[test]
+    fn api_key_keep_clear_replace() {
+        let mut cfg = disk_janitor::config::Config::default();
+        cfg.api_key = Some("existing".into());
+
+        let mut keep = sample_in();
+        keep.api_key = None;
+        apply_model_config(&mut cfg, &keep);
+        assert_eq!(cfg.api_key.as_deref(), Some("existing"), "None keeps the key");
+
+        let mut clear = sample_in();
+        clear.api_key = Some(String::new());
+        apply_model_config(&mut cfg, &clear);
+        assert_eq!(cfg.api_key, None, "Some(\"\") clears the key");
+
+        let mut replace = sample_in();
+        replace.api_key = Some("new-key".into());
+        apply_model_config(&mut cfg, &replace);
+        assert_eq!(cfg.api_key.as_deref(), Some("new-key"), "Some(k) replaces the key");
+    }
+
+    /// A save that keeps the key (None) must not persist any api_key line —
+    /// the file never holds a secret the user did not explicitly set.
+    #[test]
+    fn blank_key_write_omits_api_key_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let mut cfg = disk_janitor::config::Config::default();
+        let mut inp = sample_in();
+        inp.api_key = None;
+        apply_model_config(&mut cfg, &inp);
+        write_config(&cfg, &path).expect("write");
+
+        let raw = std::fs::read_to_string(&path).expect("read back");
+        assert!(!raw.contains("api_key"), "no api_key line when none set: {raw}");
     }
 }

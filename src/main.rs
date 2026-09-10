@@ -65,13 +65,22 @@ enum Cmd {
     /// Recover from crashes: reconcile per-volume WALs against the filesystem (§5.2).
     Recover,
     /// Live LLM agent run (feature `llm`): scan JSON → tool loop → proposal.
-    /// Build with `--features llm`; errors cleanly otherwise.
+    /// Build with `--features llm`; errors cleanly otherwise. `--resume <run_id>`
+    /// continues a saved session from the sessions dir instead of starting fresh.
     Agent {
-        /// Path to `janitor scan --json` output.
-        scan_json: std::path::PathBuf,
-        /// User intent sentence, e.g. 「腾出 25 GB」.
+        /// Path to `janitor scan --json` output (needed for fresh runs; on
+        /// `--resume` it re-seeds the session context if given, else empty).
+        scan_json: Option<std::path::PathBuf>,
+        /// User intent sentence, e.g. 「腾出 25 GB」 (fresh runs only).
         #[arg(long)]
-        prompt: String,
+        prompt: Option<String>,
+        /// Resume a saved session:
+        /// `~/.local/state/disk-janitor/sessions/<run_id>.json`.
+        #[arg(long)]
+        resume: Option<String>,
+        /// Print the trajectory as JSON lines instead of the human summary.
+        #[arg(long)]
+        json_events: bool,
     },
 }
 
@@ -100,26 +109,82 @@ fn main() -> anyhow::Result<()> {
         Cmd::Purge { manifest, bytes } => janitor_exec::run_purge(manifest, bytes),
         Cmd::Restore { op_id } => janitor_exec::run_restore(&op_id),
         Cmd::Recover => janitor_exec::run_recover(),
-        Cmd::Agent { scan_json, prompt } => janitor_agent::run_agent(&scan_json, &prompt),
+        Cmd::Agent {
+            scan_json,
+            prompt,
+            resume,
+            json_events,
+        } => janitor_agent::run_agent(
+            scan_json.as_deref(),
+            prompt.as_deref(),
+            resume.as_deref(),
+            json_events,
+        ),
     }
 }
 
 pub mod janitor_agent {
-    /// `janitor agent <scan-json> --prompt …` (D-36): live LLM agent run over a scan.
-    /// Seeds `SessionCtx` from the scan JSON exactly like `run_plan`, drives the
-    /// sans-IO loop (next_step → complete/feed_reply → execute_tools) until Done,
+    /// R5 sessions directory: `dirs::state_dir()/disk-janitor/sessions`
+    /// (SPEC §3.7 — the same dir the GUI Ledger lists). Shared by `--resume`
+    /// (load) and the end-of-run persist (save).
+    #[cfg(feature = "llm")]
+    fn sessions_dir() -> anyhow::Result<std::path::PathBuf> {
+        let state =
+            dirs::state_dir().ok_or_else(|| anyhow::anyhow!("no user state dir (HOME unset?)"))?;
+        Ok(state.join("disk-janitor").join("sessions"))
+    }
+
+    /// `janitor agent [<scan-json> --prompt … | --resume <run_id>]` (D-36): live
+    /// LLM agent run. A fresh run seeds `SessionCtx` from the scan JSON exactly
+    /// like `run_plan`; `--resume` continues a saved session from the sessions
+    /// dir. Drives the sans-IO loop (step → execute_tools → step …) until Done,
     /// then prints the trajectory, the proposal (plan id / awaiting-human-confirm),
     /// and cumulative usage/cost from the budget state.
+    ///
+    /// R4: every model call / tool execution / terminal transition streams a
+    /// progress line to stderr (`--json-events`: one JSON line per event on
+    /// stdout, human lines + summary on stderr). SIGINT (Ctrl-C) or ANY stdin
+    /// line (Enter) cancels the run — Done{UserCancel}, and `finish` still posts
+    /// the Budget rec (SPEC §3.2).
+    ///
+    /// R5: every finished run (fresh or resumed) is persisted to the sessions
+    /// dir so the GUI Ledger can list/reload it.
     #[cfg(feature = "llm")]
-    pub fn run_agent(scan_json: &std::path::Path, prompt: &str) -> anyhow::Result<()> {
+    pub fn run_agent(
+        scan_json: Option<&std::path::Path>,
+        prompt: Option<&str>,
+        resume: Option<&str>,
+        json_events: bool,
+    ) -> anyhow::Result<()> {
         use disk_janitor::agent::http::HttpChatClient;
-        use disk_janitor::agent::{self, ChatClient, Role, RunState};
+        use disk_janitor::agent::{self, Role, RunState};
+        use std::io::BufRead;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
-        let raw = fs_err::read_to_string(scan_json)?;
-        let parsed: serde_json::Value = serde_json::from_str(&raw)?;
-        let candidates: Vec<disk_janitor::Candidate> =
-            serde_json::from_value(parsed["candidates"].clone())?;
-        let scan: disk_janitor::scan::ScanTotals = serde_json::from_value(parsed["scan"].clone())?;
+        // R4: graceful Ctrl-C → run.cancel() → Done{UserCancel} → finish() still
+        // posts the Budget rec. The default SIGINT would kill the process mid-run.
+        INTERRUPTED.store(false, Ordering::SeqCst);
+        unsafe {
+            // Function-pointer → integer cast (sighandler_t); the lint wants an
+            // explicit pointer hop first — same ABI, no behavior change.
+            libc::signal(
+                libc::SIGINT,
+                handle_sigint as *const () as libc::sighandler_t,
+            );
+        }
+
+        // Any stdin line (Enter) cancels too; the listener thread exits on EOF,
+        // so a non-interactive run (closed stdin) is never cancelled by it.
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let cancel = Arc::clone(&cancel);
+            std::thread::spawn(move || {
+                for _line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+            });
+        }
 
         let cfg = disk_janitor::config::load()?;
         eprintln!("agent model: {} @ {}", cfg.model, cfg.endpoint);
@@ -127,33 +192,108 @@ pub mod janitor_agent {
 
         let home = disk_janitor::execute::home_ledger_dir();
         let ledger = disk_janitor::ledger::open(&home)?;
-        let mut ctx = agent::SessionCtx {
-            candidates,
-            vols: scan.volumes,
-            ledger,
-            files_scanned: scan.files,
-            last_plan_id: None,
-            last_plan_bytes: None,
+
+        // Fresh run: the scan JSON seeds the ctx (same parse as run_plan).
+        // Resumed run: SessionCtx is caller-seeded by design and not part of the
+        // snapshot — an empty ctx lets the model finish gracefully (R5 contract).
+        let (mut ctx, mut run) = if let Some(rid) = resume {
+            let path = sessions_dir()?.join(format!("{rid}.json"));
+            (
+                agent::SessionCtx {
+                    candidates: Vec::new(),
+                    vols: Vec::new(),
+                    ledger,
+                    files_scanned: 0,
+                    last_plan_id: None,
+                    last_plan_bytes: None,
+                },
+                disk_janitor::agent::load_snapshot(&path)?,
+            )
+        } else {
+            let scan_json = scan_json.ok_or_else(|| {
+                anyhow::anyhow!("`janitor agent` needs a scan JSON path (or `--resume <run_id>`)")
+            })?;
+            let prompt = prompt.ok_or_else(|| {
+                anyhow::anyhow!("`janitor agent` needs `--prompt` (or `--resume <run_id>`)")
+            })?;
+            let raw = fs_err::read_to_string(scan_json)?;
+            let parsed: serde_json::Value = serde_json::from_str(&raw)?;
+            let candidates: Vec<disk_janitor::Candidate> =
+                serde_json::from_value(parsed["candidates"].clone())?;
+            let scan: disk_janitor::scan::ScanTotals =
+                serde_json::from_value(parsed["scan"].clone())?;
+            (
+                agent::SessionCtx {
+                    candidates,
+                    vols: scan.volumes,
+                    ledger,
+                    files_scanned: scan.files,
+                    last_plan_id: None,
+                    last_plan_bytes: None,
+                },
+                agent::AgentRun::new(prompt, &cfg.model, cfg.prices.clone(), cfg.budget.clone()),
+            )
         };
-        let mut run =
-            agent::AgentRun::new(prompt, &cfg.model, cfg.prices.clone(), cfg.budget.clone());
+
+        // R4 progress streaming: JSON lines on stdout, human lines on stderr.
+        let on_progress = move |ev: &agent::ProgressEvent| {
+            if json_events {
+                println!(
+                    "{}",
+                    serde_json::to_string(ev).expect("progress event is JSON")
+                );
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+            } else {
+                eprintln!(
+                    "turn {} · {} · {}{} · {} tok · ${:.6}",
+                    ev.turn,
+                    ev.phase,
+                    ev.tool.as_deref().unwrap_or("-"),
+                    if ev.detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", ev.detail)
+                    },
+                    ev.budget.tokens,
+                    ev.budget.cost_usd,
+                );
+            }
+        };
+        run.on_progress(Some(Box::new(on_progress)));
 
         loop {
-            match run.next_step() {
-                RunState::CallModel { .. } => {
-                    let reply = client.complete(run.history(), &agent::tool_defs())?;
-                    run.feed_reply(reply);
-                }
-                RunState::CallTools { calls } => {
+            if cancel.load(Ordering::SeqCst) || INTERRUPTED.load(Ordering::SeqCst) {
+                run.cancel();
+                break;
+            }
+            match run.step(&client) {
+                Ok(RunState::CallTools { calls }) => {
                     run.execute_tools(&calls, &mut ctx);
                 }
-                RunState::Done { .. } => break,
+                Ok(RunState::Done { .. }) => break,
+                Ok(RunState::CallModel { .. }) => unreachable!("step never returns CallModel"),
+                Err(e) => anyhow::bail!("agent step failed: {e}"),
             }
         }
         run.finish(&mut ctx)?;
+        // R5: persist every finished run (fresh or resumed) so the GUI can list it.
+        run.persist_snapshot(&sessions_dir()?)?;
+
+        // Final summary: stdout in human mode; in JSON mode stdout is the event
+        // stream, so the summary goes to stderr.
+        macro_rules! say {
+            ($($t:tt)*) => {
+                if json_events {
+                    eprintln!($($t)*);
+                } else {
+                    println!($($t)*);
+                }
+            };
+        }
 
         // --- trajectory ---------------------------------------------------------
-        println!("== trajectory (run {}) ==", run.run_id());
+        say!("== trajectory (run {}) ==", run.run_id());
         for (i, m) in run.history().iter().enumerate() {
             if m.role == Role::Tool {
                 let tag = m
@@ -161,11 +301,11 @@ pub mod janitor_agent {
                     .as_deref()
                     .map(|id| format!("({id})"))
                     .unwrap_or_default();
-                println!("[{:>2}] tool{tag}: {}", i + 1, m.content);
+                say!("[{:>2}] tool{tag}: {}", i + 1, m.content);
             } else {
-                println!("[{:>2}] {:?}: {}", i + 1, m.role, m.content);
+                say!("[{:>2}] {:?}: {}", i + 1, m.role, m.content);
                 for tc in &m.tool_calls {
-                    println!("        → {}: {}({})", tc.id, tc.name, tc.arguments);
+                    say!("        → {}: {}({})", tc.id, tc.name, tc.arguments);
                 }
             }
         }
@@ -175,8 +315,8 @@ pub mod janitor_agent {
             RunState::Done { reason } => *reason,
             _ => unreachable!("loop exits only on Done"),
         };
-        println!("== result ==");
-        println!("stop_reason: {reason:?}");
+        say!("== result ==");
+        say!("stop_reason: {reason:?}");
         let mut proposal = None;
         let mut verdict = None;
         for m in run.history().iter().rev() {
@@ -195,7 +335,7 @@ pub mod janitor_agent {
             }
         }
         match proposal {
-            Some(p) => println!(
+            Some(p) => say!(
                 "proposal: plan_id={} awaiting={}",
                 p["plan_id"],
                 p.get("awaiting").and_then(|a| a.as_str()).unwrap_or("n/a")
@@ -207,13 +347,13 @@ pub mod janitor_agent {
                     .rev()
                     .find(|m| m.role == Role::Assistant && !m.content.is_empty());
                 match last {
-                    Some(m) => println!("proposal: (final text) {}", m.content),
-                    None => println!("proposal: (none — run ended without a plan)"),
+                    Some(m) => say!("proposal: (final text) {}", m.content),
+                    None => say!("proposal: (none — run ended without a plan)"),
                 }
             }
         }
         if let Some(v) = verdict {
-            println!(
+            say!(
                 "verdict: {} reason={}",
                 v["verdict"],
                 v.get("reason").and_then(|r| r.as_str()).unwrap_or("")
@@ -222,8 +362,8 @@ pub mod janitor_agent {
 
         // --- budget ---------------------------------------------------------------
         let b = run.budget();
-        println!("== budget ==");
-        println!(
+        say!("== budget ==");
+        say!(
             "turns: {} / {}",
             b.turns,
             if b.cap.max_turns == 0 {
@@ -232,7 +372,7 @@ pub mod janitor_agent {
                 b.cap.max_turns.to_string()
             }
         );
-        println!(
+        say!(
             "tokens: prompt {} + completion {} = {} / {}",
             b.prompt_tokens,
             b.completion_tokens,
@@ -243,7 +383,7 @@ pub mod janitor_agent {
                 b.cap.tokens.to_string()
             }
         );
-        println!(
+        say!(
             "cost_usd: {:.6} / {}",
             b.cost_usd,
             if b.cap.cost_usd == 0.0 {
@@ -255,9 +395,24 @@ pub mod janitor_agent {
         Ok(())
     }
 
+    /// R4: SIGINT flag — set by the signal handler, polled by the run loop.
+    #[cfg(feature = "llm")]
+    static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Async-signal-safe: an atomic store is lock-free (the standard pattern).
+    #[cfg(feature = "llm")]
+    extern "C" fn handle_sigint(_sig: libc::c_int) {
+        INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Clean error when the binary was built without the `llm` feature.
     #[cfg(not(feature = "llm"))]
-    pub fn run_agent(_scan_json: &std::path::Path, _prompt: &str) -> anyhow::Result<()> {
+    pub fn run_agent(
+        _scan_json: Option<&std::path::Path>,
+        _prompt: Option<&str>,
+        _resume: Option<&str>,
+        _json_events: bool,
+    ) -> anyhow::Result<()> {
         anyhow::bail!(
             "`janitor agent` needs the `llm` feature (live model calls): \
              build with `cargo build --features llm`"

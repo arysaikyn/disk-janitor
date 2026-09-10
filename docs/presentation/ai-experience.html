@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>我用 AI 的经验和体会 — Disk Janitor</title>
+<style>
+  /* Tokens lifted from app/src/app.css — the product's own design language */
+  :root {
+    --ink: #0a0e14;
+    --surface: #111721;
+    --surface-lift: #16202c;
+    --text: #e8edf4;
+    --mist: #8b98a8;
+    --accent: #2dd4bf;
+    --amber: #fbbf24;
+    --hairline: rgba(139, 152, 168, 0.14);
+    --shadow-2: 0 2px 8px rgb(0 0 0 / 0.32), 0 8px 28px rgb(0 0 0 / 0.24);
+    --sans: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: var(--sans);
+    background: var(--ink);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+    padding: 46px 88px 34px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .orb-ambient {
+    position: absolute;
+    top: -180px; right: -140px;
+    width: 640px; height: 640px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 42% 40%, rgba(45, 212, 191, 0.13) 0%, rgba(45, 212, 191, 0.05) 34%, transparent 62%);
+    pointer-events: none;
+  }
+  .orb-ring {
+    position: absolute;
+    top: -120px; right: -60px;
+    width: 520px; height: 520px;
+    border-radius: 50%;
+    border: 1px solid rgba(45, 212, 191, 0.10);
+    pointer-events: none;
+  }
+
+  /* ---------- header ---------- */
+  .kicker {
+    font-family: var(--mono);
+    font-size: 15px;
+    letter-spacing: 0.22em;
+    color: var(--mist);
+    text-transform: uppercase;
+  }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  h1 {
+    margin-top: 14px;
+    font-size: 60px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 1.12;
+  }
+  h1 .ai { color: var(--accent); }
+  .subtitle {
+    margin-top: 10px;
+    font-size: 20px;
+    color: var(--mist);
+    font-weight: 400;
+  }
+  .subtitle .brand { color: var(--text); font-weight: 600; }
+
+  .stats {
+    margin-top: 18px;
+    font-family: var(--mono);
+    font-size: 17px;
+    color: var(--mist);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+  .stats b { color: var(--text); font-weight: 600; }
+  .stats .sep { color: rgba(139,152,168,.38); }
+
+  /* ---------- main: lessons ---------- */
+  .main {
+    margin-top: 26px;
+    flex: 1;
+    display: grid;
+    grid-template-columns: 54fr 46fr;
+    column-gap: 72px;
+    align-content: start;
+    min-height: 0;
+  }
+  .col { display: flex; flex-direction: column; }
+
+  .lesson {
+    padding: 20px 0 18px;
+    border-top: 1px solid var(--hairline);
+  }
+  .col > .lesson:first-child { border-top: none; padding-top: 6px; }
+  .lesson .num {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--accent);
+    letter-spacing: 0.18em;
+    margin-bottom: 8px;
+  }
+  .lesson h2 {
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: 0.015em;
+    line-height: 1.25;
+  }
+  .lesson p {
+    margin-top: 8px;
+    font-size: 16.5px;
+    line-height: 1.58;
+    color: var(--mist);
+    font-weight: 400;
+    text-wrap: pretty;
+  }
+  .lesson p .hl { color: var(--text); }
+  .lesson .evd {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(139, 152, 168, 0.82);
+  }
+  .lesson .evd .q { color: var(--amber); }
+  .lesson .evd .r { color: var(--accent); }
+
+  /* receipts panel */
+  .receipts {
+    margin-top: 18px;
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: var(--shadow-2);
+    padding: 22px 28px 20px;
+  }
+  .receipts .rt {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    color: var(--mist);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .receipts .rt b { color: var(--accent); font-weight: 600; }
+  .receipts .row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 8px 0;
+    border-top: 1px solid var(--hairline);
+    font-size: 15.5px;
+    line-height: 1.5;
+  }
+  .receipts .row:first-of-type { border-top: none; padding-top: 0; }
+  .receipts .path {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .receipts .what { color: var(--mist); }
+  .receipts .note {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--hairline);
+    font-size: 14px;
+    color: rgba(139,152,168,.85);
+  }
+  .receipts .note b { color: var(--text); font-weight: 600; }
+
+  /* ---------- timeline spine ---------- */
+  .timeline {
+    margin-top: 20px;
+    padding-top: 22px;
+    border-top: 1px solid var(--hairline);
+  }
+  .tl-track {
+    height: 2px;
+    background: linear-gradient(90deg, rgba(45,212,191,.45), rgba(139,152,168,.18) 70%, rgba(45,212,191,.55));
+    border-radius: 2px;
+  }
+  .tl-nodes {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    margin-top: -7px;
+  }
+  .tl-node { position: relative; padding-top: 18px; }
+  .tl-node::before {
+    content: "";
+    position: absolute;
+    top: -5px; left: 2px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--ink);
+    border: 2px solid var(--mist);
+  }
+  .tl-node.hot::before {
+    border-color: var(--accent);
+    background: var(--accent);
+    box-shadow: 0 0 0 5px rgba(45,212,191,.14), 0 0 14px rgba(45,212,191,.5);
+  }
+  .tl-node .d {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .tl-node.hot .d { color: var(--accent); }
+  .tl-node .t {
+    margin-top: 3px;
+    font-size: 14.5px;
+    color: var(--mist);
+    line-height: 1.4;
+  }
+
+  .foot {
+    margin-top: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: rgba(139,152,168,.6);
+  }
+  .foot .brand { color: var(--accent); letter-spacing: 0.14em; }
+</style>
+</head>
+<body>
+  <div class="orb-ambient"></div>
+  <div class="orb-ring"></div>
+
+  <header>
+    <div class="kicker">DISK JANITOR · 还我磁盘 — 课堂展示 · <b>AI 使用经验和体会</b></div>
+    <h1>我用 <span class="ai">AI</span> 的经验和体会</h1>
+    <div class="subtitle">一个人 + 一支 <span class="brand">AI 团队</span>：12 天，从选题到成品</div>
+    <div class="stats">
+      <b>13</b> 会话 <span class="sep">·</span> <b>100+</b> 条指令 <span class="sep">·</span> <b>58</b> commits <span class="sep">·</span>
+      <b>38</b> 项决策 <span class="sep">·</span> <b>21</b> 篇研究笔记 <span class="sep">·</span> <b>91</b> 个测试 <span class="sep">·</span> <b>≈8.5k</b> 行 Rust
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="col">
+      <div class="lesson">
+        <div class="num">01</div>
+        <h2>编排团队，而非单打独斗</h2>
+        <p>把 AI 当团队用：主控只做规划与评审，子代理并行施工；<span class="hl">贵模型负责想，快模型负责写</span>。杠杆最大的一次投入，是让 AI 替我写好下一次会话的完整开工指令——用 AI 驱动 AI。</p>
+        <div class="evd"><span class="q">「tell me which magic keywords to use」</span><br>→ 一夜 ≈7h：crate 骨架 → M1–M5 · <span class="r">91 tests 全绿</span></div>
+      </div>
+      <div class="lesson">
+        <div class="num">02</div>
+        <h2>不信回答，只信验证</h2>
+        <p>AI 会自信地犯错：它"更正"出过不存在的截止日期，也误诊过并行任务的死因。<span class="hl">地面真相由人补给</span>——贴作业原文、查 git、跑真实程序。</p>
+        <div class="evd"><span class="q">「did you even check?」</span> → 逐条复盘，<span class="r">8/8</span> 条并行任务全部恢复</div>
+      </div>
+      <div class="lesson">
+        <div class="num">03</div>
+        <h2>决策权留给人</h2>
+        <p>AI 压缩选项、列清代价，我来拍板。<span class="hl">38 项决策、17 份 ADR</span> 全部由我逐条盖章后冻结——包括产品最关键的两处定制：证据分级与路径盲 LLM。</p>
+        <div class="evd"><span class="q">「grill me until i'm comfortable with the design decisions」</span></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="lesson">
+        <div class="num">04</div>
+        <h2>品味不可外包</h2>
+        <p>AI 能做到 80 分的"正确"，到不了 100 分的"对"。让它先拆解 DaisyDisk 为什么好看，再用产品自己的设计语言<span class="hl">重做了两轮</span>；卡死、报错这些真 bug，也靠人肉 QA 揪出来。</p>
+        <div class="evd"><span class="q">「the design is still ass」</span> / <span class="q">「i pressed 开始扫描 and it froze」</span> → 修成异步命令</div>
+      </div>
+      <div class="lesson">
+        <div class="num">05</div>
+        <h2>隐私是设计出来的</h2>
+        <p>产品内置的 Agent 是<span class="hl">"路径盲"</span>的：提示词在唯一出口处剥离文件路径，CI 有泄漏测试把关。让 AI 进入生活之前，先设计好它看不见什么。</p>
+        <div class="evd">path-blind chokepoint + leak tests（src/agent.rs · M4）</div>
+      </div>
+
+      <div class="receipts">
+        <div class="rt">RECEIPTS · <b>证据都在仓库里</b></div>
+        <div class="row"><span class="path">docs/ai-logs/M1–M5.md</span><span class="what">里程碑级对话摘录（脱敏）</span></div>
+        <div class="row"><span class="path">docs/design-decisions.md</span><span class="what">38 项决策 · 17 份 ADR，逐条盖章</span></div>
+        <div class="row"><span class="path">docs/decision-sheet</span><span class="what">当日 7 项模糊决策 → 当天处置</span></div>
+        <div class="note"><b>全部对话原始记录</b>随源码提交至清华 Git —— 对应评分项「AI 对话历史」。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="timeline">
+    <div class="tl-track"></div>
+    <div class="tl-nodes">
+      <div class="tl-node"><div class="d">08.30</div><div class="t">立项 · 21 篇研究先行</div></div>
+      <div class="tl-node"><div class="d">08.31</div><div class="t">被"拷问"出 38 项决策</div></div>
+      <div class="tl-node"><div class="d">09.01</div><div class="t">收敛为一份 SPEC.md</div></div>
+      <div class="tl-node"><div class="d">09.08</div><div class="t">设计语言重铸 · 定稿</div></div>
+      <div class="tl-node hot"><div class="d">09.09–10</div><div class="t">通宵实现 M1–M5 · GUI 全流程</div></div>
+      <div class="tl-node hot"><div class="d">09.10</div><div class="t">课堂展示 · 今天</div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="brand">还我磁盘 — 你值得你的空间</div>
+    <div>每一行 Rust 我都解释得清楚 · 证据可回溯至 commit</div>
+  </div>
+</body>
+</html>

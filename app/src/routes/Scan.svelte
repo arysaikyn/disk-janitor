@@ -87,7 +87,7 @@
         // Let the success beat read before leaving the screen (900ms swell).
         await new Promise((r) => setTimeout(r, 900));
       }
-      ondone(String(path));
+      if (!canceled) ondone(String(path));
     } catch (e) {
       errMsg = String(e);
     }

@@ -221,8 +221,28 @@ function demo<T>(cmd: string, args?: Record<string, unknown>): T {
       ] as T;
     case "get_last_scan":
       return { roots: ["/Users/me"], min_bytes: 52_428_800, candidates: DEMO_CANDIDATES } as T;
-    case "get_ledger_tail":
+    case "get_ledger_tail": {
+      const mk = (seq, minsAgo, rec) => ({
+        v: 1, seq, crc32: 1000 + seq, prev_crc: null,
+        ts: new Date(Date.now() - minsAgo * 60_000).toISOString(),
+        kind: rec.t, rec,
+      });
+      const e1 = { cid: "c1", path: "~/code/api/node_modules", path_hash: "h1", action: { type: "quarantine" }, grade: "rebuildable_from_source", alloc_bytes: 2_100_000_000 };
+      const e2 = { cid: "c2", path: "~/Library/Developer/Xcode/DerivedData", path_hash: "h2", action: { type: "quarantine" }, grade: "rebuildable_from_source", alloc_bytes: 6_800_000_000 };
+      const e3 = { cid: "c3", path: "~/.npm/_cacache", path_hash: "h3", action: { type: "quarantine" }, grade: "pure_cache", alloc_bytes: 3_200_000_000 };
+      return [
+        mk(3, 64, { t: "apply", plan_id: "demo-20260909", entry: e1, original_path: e1.path, quarantine_path: "/.Janitor/quarantine/c1", renamex_np: true, undo: { original_path: e1.path, byte_count: e1.alloc_bytes, grace_expires_at: new Date(Date.now() + 71.5 * 3600_000).toISOString() } }),
+        mk(4, 63, { t: "apply", plan_id: "demo-20260909", entry: e2, original_path: e2.path, quarantine_path: "/.Janitor/quarantine/c2", renamex_np: true, undo: { original_path: e2.path, byte_count: e2.alloc_bytes, grace_expires_at: new Date(Date.now() + 71.6 * 3600_000).toISOString() } }),
+        mk(5, 62, { t: "apply", plan_id: "demo-20260909", entry: e3, original_path: e3.path, quarantine_path: "/.Janitor/quarantine/c3", renamex_np: true, undo: { original_path: e3.path, byte_count: e3.alloc_bytes, grace_expires_at: new Date(Date.now() + 71.7 * 3600_000).toISOString() } }),
+        mk(6, 41, { t: "purge", plan_id: "demo-20260909", entry: e3, bytes_freed: e3.alloc_bytes, quarantine_path: "/.Janitor/quarantine/c3" }),
+        mk(7, 22, { t: "restore", plan_id: "demo-20260909", entry: e2, from: "/.Janitor/quarantine/c2", to: e2.path, undoes: 4 }),
+      ] as T;
+    }
+    // R5 trajectory: demo mode has no saved sessions (mirrors commands.rs demo).
+    case "get_agent_sessions":
       return [] as T;
+    case "get_agent_trajectory":
+      return null as T;
     case "start_scan": {
       // Stream Files ticks + finished over the channel so the ring animates.
       const ch = args?.channel as { onmessage?: (m: ScanProgressMsg) => void } | undefined;
@@ -260,7 +280,7 @@ function demo<T>(cmd: string, args?: Record<string, unknown>): T {
       return null as T;
     case "build_plan":
       return {
-        plan_id: "plan-demo-20260909",
+        plan_id: "demo-20260909",
         created_at: new Date().toISOString(),
         entries: DEMO_CANDIDATES.filter((c) => c.grade !== "hands_off").map((c) => ({
           cid: c.id,
