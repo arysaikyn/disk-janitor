@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.giveback.diskjanitor",
   "build": {
-    "beforeDevCommand": "cd ../app && bun run dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "cd ../app && bun run build",
+    "beforeBuildCommand": "",
     "frontendDist": "../app/dist"
   },
   "app": {
@@ -25,12 +25,22 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": ["main-cap"]
+      "capabilities": [
+        "main-cap"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app"],
-    "icon": ["icons/icon.svg"]
+    "targets": [
+      "dmg",
+      "app"
+    ],
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.png",
+      "icons/icon-128.png",
+      "icons/icon-256.png"
+    ]
   }
 }
