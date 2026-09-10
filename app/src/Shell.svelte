@@ -4,11 +4,12 @@
   import Ledger from "./routes/Ledger.svelte";
   import Scan from "./routes/Scan.svelte";
   import PlanReview from "./routes/PlanReview.svelte";
+  import AgentPanel from "./routes/AgentPanel.svelte";
   import Settings from "./lib/Settings.svelte";
   import PurgeGate from "./lib/PurgeGate.svelte";
   import { t, getLocale, onLocaleChange } from "./lib/i18n";
 
-  type Route = "dashboard" | "scan" | "review" | "plan" | "ledger";
+  type Route = "dashboard" | "scan" | "review" | "plan" | "ledger" | "agent";
   let route: Route = $state("dashboard");
   let settingsOpen = $state(false);
   let purgeGate = $state<{ planId: string; bytes: number } | null>(null);
@@ -85,6 +86,11 @@
         <span class="ic" aria-hidden="true">≡</span>
         <span>{t("nav.ledger")}</span>
       </button>
+      <button class="nav-btn" class:active={route === "agent"} onclick={() => goto("agent")}>
+        <span class="dot" aria-hidden="true"></span>
+        <span class="ic" aria-hidden="true">✦</span>
+        <span>{t("nav.agent")}</span>
+      </button>
       <button class="nav-btn" class:active={settingsOpen} onclick={() => (settingsOpen = true)}>
         <span class="dot" aria-hidden="true"></span>
         <span class="ic" aria-hidden="true">⚙</span>
@@ -110,6 +116,8 @@
         <PlanReview onpurge={(id, bytes) => (purgeGate = { planId: id, bytes })} />
       {:else if route === "ledger"}
         <Ledger />
+      {:else if route === "agent"}
+        <AgentPanel scanPath={lastScanPath} onopenplan={openPlan} onopensettings={() => (settingsOpen = true)} />
       {/if}
     </div>
   </main>

@@ -142,10 +142,41 @@ export type ExecProgressMsg =
   | { t: "restored"; cid: string; to: string }
   | { t: "error"; cid: string; err: string };
 
+// ── R4 agent wire events (commands.rs AgentProgressMsg / AgentSummary) ───────
+
+/** One streamed event of a live agent run — 1:1 with commands.rs AgentProgressMsg. */
+export interface AgentProgressMsg {
+  turn: number;
+  /** `"model_call"` | `"tool_exec"` | `"done"` (snake_case, as serialized). */
+  phase: "model_call" | "tool_exec" | "done";
+  /** Tool name for tool_exec events, else null. */
+  tool?: string | null;
+  detail: string;
+  /** Running totals after this event. */
+  budget: { tokens: number; cost_usd: number };
+}
+
+/** Completion payload of run_agent (commands.rs AgentSummary). */
+export interface AgentSummary {
+  /** snake_case StopReason (e.g. `"model_stop"`, `"user_cancel"`). */
+  stop_reason: string;
+  turns: number;
+  tokens: number;
+  cost_usd: number;
+  /** The plan id the run settled on, if any. */
+  plan_id?: string | null;
+  /** The recorded verdict, else the final assistant text, else none. */
+  proposal?: string | null;
+}
+
 // ── invoke with demo fallback ────────────────────────────────────────────────
 
 const hasTauri = () =>
   typeof window !== "undefined" && typeof (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
+
+// R4 demo: cancel_agent flips this; the scripted run_agent trajectory then
+// resolves early with stop_reason "user_cancel" (mirrors the atomic in AgentState).
+let demoAgentCancel = false;
 
 const DEMO_CANDIDATES: CandidateDto[] = [
   {
@@ -277,6 +308,58 @@ function demo<T>(cmd: string, args?: Record<string, unknown>): T {
       return "/Users/me/.disk-janitor/last-scan.json" as T;
     }
     case "cancel_scan":
+      return null as T;
+    case "run_agent": {
+      // R4: scripted trajectory so the orb pulses — one event per 350ms.
+      // Tokens 50–160/call; cost at the config defaults' deepseek-chat prices
+      // ($0.27/M in, $1.10/M out — src/config.rs). cancel_agent (demo) flips
+      // demoAgentCancel and the run resolves early with user_cancel.
+      demoAgentCancel = false;
+      const ch = args?.channel as { onmessage?: (m: AgentProgressMsg) => void } | undefined;
+      const seq: AgentProgressMsg[] = [
+        { turn: 1, phase: "model_call", tool: null, detail: "读取扫描清单，识别候选…", budget: { tokens: 60, cost_usd: 0.00005 } },
+        { turn: 1, phase: "tool_exec", tool: "scan_summary", detail: "19 个候选 · 21.8 GB", budget: { tokens: 60, cost_usd: 0.00005 } },
+        { turn: 2, phase: "model_call", tool: null, detail: "按策略筛选可安全回收项…", budget: { tokens: 150, cost_usd: 0.00015 } },
+        { turn: 2, phase: "tool_exec", tool: "build_plan", detail: "13 隔离 · 2 清理 · 4 拒绝", budget: { tokens: 150, cost_usd: 0.00015 } },
+        { turn: 3, phase: "tool_exec", tool: "record_verdict", detail: "已记录判定，写入计划", budget: { tokens: 210, cost_usd: 0.00025 } },
+        { turn: 3, phase: "done", tool: null, detail: "完成 — 已生成计划", budget: { tokens: 210, cost_usd: 0.00025 } },
+      ];
+      const done = seq[seq.length - 1];
+      return new Promise<AgentSummary>((resolve) => {
+        let i = 0;
+        const tick = () => {
+          if (demoAgentCancel) {
+            ch?.onmessage?.({ ...done, detail: "已取消" });
+            resolve({
+              stop_reason: "user_cancel",
+              turns: done.turn,
+              tokens: done.budget.tokens,
+              cost_usd: done.budget.cost_usd,
+              plan_id: null,
+              proposal: null,
+            });
+            return;
+          }
+          if (i < seq.length) {
+            ch?.onmessage?.(seq[i]);
+            i += 1;
+            setTimeout(tick, 350);
+          } else {
+            resolve({
+              stop_reason: "requested_by_tool",
+              turns: done.turn,
+              tokens: done.budget.tokens,
+              cost_usd: done.budget.cost_usd,
+              plan_id: "demo-plan",
+              proposal: "建议清理 19.3 GB 纯缓存与可重建目录",
+            });
+          }
+        };
+        tick();
+      }) as T;
+    }
+    case "cancel_agent":
+      demoAgentCancel = true;
       return null as T;
     case "build_plan":
       return {
