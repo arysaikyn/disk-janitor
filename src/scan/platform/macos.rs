@@ -1,4 +1,4 @@
-//! macOS scan implementation: dua-core 3.3.0 walker + setiopolicy_np + sysinfo volumes.
+//! macOS scan implementation: dua-core 4.0.0 walker + setiopolicy_np + sysinfo volumes.
 
 use std::sync::Arc;
 use std::time::Instant;

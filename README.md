@@ -79,7 +79,7 @@ cargo test --features llm                                    # 122 tests (adds t
 
 | Milestone | Status | Evidence |
 |---|---|---|
-| M1 scan + classify core | ✅ | 9f4cb7c (dua-core 3.3.0 pin, syscall tests, fixture generator) |
+| M1 scan + classify core | ✅ | 9f4cb7c (dua-core 3.3.0 pin at the time — bumped to `=4.0.0` 09-10 per D-37; syscall tests, fixture generator) |
 | M2 plan/execute + WAL + ledger | ✅ | 9fd33f1, 17647bb (crash injection, restore keep-both, non-UTF8 refusal) |
 | M3 GUI shell | ✅ | 97d704f (Tauri 2.11.5, 10 IPC commands, writable-vol dedup) |
 | M4 config + agent + cost | ✅ | 3ed9545, a671575, 77f0b97 (NL policy E2E 腾出 25 GB) |

@@ -14,18 +14,12 @@ path = "src/bin/fixture-gen.rs"
 
 [dependencies]
 dua-core = "=4.0.0"                                # [04] bumped 3.3.0→4.0.0 per owner D-37 (2026-09-10); API probe required
-ignore = "0.4.33"                                   # [04] fallback walker + GitignoreBuilder
-globset = "0.4.20"                                  # [04] policy/ignore glob matching
-walkdir = "2.5.0"                                   # [04] serial fallback traversal
+globset = "0.4.20"                                  # [04] policy glob matching (deny-globs)
 crossbeam-channel = "0.5.16"                        # [04][06] scan->classify->exec events
 sysinfo = "0.39.6"                                  # [04] volume list/capacity
-rayon = "1.12.0"                                    # [04] CPU-bound classify pool only
 libc = "0.2.189"                                    # [04][05][08] renamex_np, setiopolicy_np, flags
-nix = { version = "0.31.3", features = ["fs"] }     # [05][08] fcntl/fstatat/flock
-rustix = { version = "1.1.4", features = ["fs"] }   # [05] xattr module
 tempfile = "3.27.0"                                 # [08] atomic persist for WAL compaction
 crc32fast = "1.5.1"                                 # [08] ledger/WAL per-record CRC
-fs4 = "1.1.0"                                       # [08] advisory flock
 fs-err = "3.3.1"                                    # [04][08] io error context
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"                              # [08] JSONL ledger + canonical CRC bytes
@@ -35,20 +29,16 @@ anyhow = "1.0.104"                                  # CLI/plan boundary errors
 clap = { version = "4.6.6", features = ["derive"] } # ADR-14 thin CLI
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.26.0", features = ["v4"] }    # WAL op ids
-cargo_metadata = "0.23.1"                           # [SPEC §3.2] rust workspace target/ layout
 dirs = "6.0.0"                                      # ledger/config home resolution
-secrecy = "0.10"                                    # API-key type (M4 config)
-same-file = "1.0.6"                                 # volume identity checks (M2)
 
 # --- LLM agent loop (feature "llm", D-36) — SPEC Part D §4 pins ---
+# HTTP transport is async-openai's own (it depends on reqwest directly); we never
+# name `reqwest` in source, so it stays a transitive dep only.
 tokio = { version = "1.53.1", optional = true, features = ["rt-multi-thread", "macros", "sync"] }
-reqwest = { version = "0.13.4", optional = true, default-features = true, features = ["json"] }
 async-openai = { version = "0.41.3", optional = true, features = ["chat-completion"] }
-tiktoken-rs = { version = "0.12.0", optional = true }
-backon = { version = "1.6.0", optional = true }
 
 [features]
-llm = ["dep:tokio", "dep:reqwest", "dep:async-openai", "dep:tiktoken-rs", "dep:backon"]
+llm = ["dep:tokio", "dep:async-openai"]
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1.6.1"                                     # [05][11] com.apple.quarantine probe

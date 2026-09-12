@@ -1,5 +1,5 @@
 //! `scan/` — parallel metadata-first walker (SPEC Part B §3.1).
-//! OWNER: scan agent. macOS walker = dua-core 3.3.0 `walk_roots(Order::ParentFirst)`;
+//! OWNER: scan agent. macOS walker = dua-core 4.0.0 `walk_roots(Order::ParentFirst)`;
 //! `setiopolicy_np` extern "C"; `VolumeInfo` via sysinfo; emits `ScanEvent` batches.
 
 use std::sync::Arc;

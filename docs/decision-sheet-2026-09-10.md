@@ -32,5 +32,14 @@
 | D-34 | **A** — same-volume writable-ancestor fallback confirmed | `src/execute.rs` (no change) |
 | D-35 | **A** — writability probe confirmed | `src/scan/platform/macos.rs` (no change) |
 | D-36 | **B** — HTTP ChatClient landed behind `llm` feature: async-openai 0.41.3 non-streaming, async-openai's built-in retry layer (429/5xx + Retry-After), Ollama id-less → synthetic ids, `janitor agent` subcommand wired; 8 stub-server tests | `src/agent/http.rs`, `src/main.rs` |
-| D-37 | **C** — dua-core bumped `=3.3.0` → `=4.0.0` (Options.skip_metadata + Entry.metadata: Option<_> adapted; SPEC §5 risk row amended); 91 tests green | `Cargo.toml`, `src/scan/platform/macos.rs` |
+| D-37 | **C** — dua-core bumped `=3.3.0` → `=4.0.0` (Options.skip_metadata + Entry.metadata: Option<_> adapted; SPEC §5 risk row amended); **112 tests green by default / 122 with `--features llm`** (counts re-verified 2026-09-12) | `Cargo.toml`, `src/scan/platform/macos.rs` |
 | D-38 | **C** — `--demo-data` Tauri switch: all 10 commands serve ipc.ts-mirrored synthetic payloads; ipc.ts probes `is_demo` once and routes to the same deterministic fallback | `src-tauri/src/{main,commands}.rs`, `app/src/lib/ipc.ts` |
+
+> **2026-09-12 audit note.** The two tables above are the **state at the 2026-09-10 session**,
+> not the shipped tree. Two things have changed since, both verified against source:
+> (1) the D-36 line "async-openai/reqwest/tokio … were never added to `Cargo.toml`" described
+> that moment — all three are declared now, `reqwest` only transitively through async-openai;
+> (2) the 12 crates below are **not** in `Cargo.toml` at all and never were:
+> `ignore`, `walkdir`, `rayon`, `nix`, `rustix`, `fs4`, `cargo_metadata`, `secrecy`, `same-file`,
+> `reqwest`, `tiktoken-rs`, `backon` (removed/never-declared, 2026-09-12).
+> Authority for any dependency claim is `Cargo.toml` + SPEC Part D §2.4/§3.

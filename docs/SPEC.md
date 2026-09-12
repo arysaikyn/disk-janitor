@@ -212,7 +212,7 @@ Key types (working names): `Candidate { path, size, class, evidence: Vec<Evidenc
 
 | Req | Implementation |
 |---|---|
-| R1 Rust core | all of the above; syscall layer via `nix`/`libc` |
+| R1 Rust core | all of the above; syscall layer via raw `libc` FFI (no `nix`/`rustix` — see §2.4) |
 | R2 UI | Tauri + Svelte 桌面 App (course R2 permits 桌面 App; SPEC Part C); thin CLI plumbing |
 | R3 model config | `config.toml` + App settings pane: endpoint, key, model, ctx len, thinking, prices |
 | R4 progress + interrupt | live scan/classify progress (ipc::Channel); interrupt-safe (WAL-consistent; apply auto-resumes, purge runs to completion) |
@@ -402,7 +402,7 @@ JSONL ledger, and an optional LLM that compiles intent into policy and never see
 | UI | `Terminal<CrosstermBackend>`, `AppState` | `cmd_tx`, draws | all `*_rx` | redraw per event (diffs are cheap) + 100 ms tick during long tasks; ncdu/gdu cadence [06 §5] |
 | Scan | dua-core `RootWalk`, dataless I/O policy | `scan_rx` | cancel flag | dropping the iterator cancels + joins workers [04 §dua] |
 | Walker pool | (dua-core internal) | → Scan thread | — | work-stealing, `available_parallelism()` threads [04 §stack] |
-| Classify | rayon pool | `cand_rx` | `scan_rx`, cancel | evidence IO per candidate; no shared maps, channel boundary [04 §6] |
+| Classify | (single-threaded) | `cand_rx` | `scan_rx`, cancel | evidence IO per candidate; no shared maps, channel boundary [04 §6] |
 | Exec | WAL fd, ledger store, quarantine dirs | `exec_rx` | plan, cancel | strictly sequential, WAL-ordered; polls cancel between entries |
 | Agent | own tokio rt, `ChatClient` | `agent_rx` | `cmd_tx`, tools | sans-IO `AgentRun` stepped on this thread [07 §rig] |
 | Tick | `AtomicBool` | `tick_rx` | — | flips every 100 ms (dua `Throttle`) [04 §progress] |
@@ -438,18 +438,40 @@ Shared state: `Arc<AtomicBool>` cancel (checked per directory / candidate / plan
 
 ### 2.4 Crates by layer
 
-dua-core 3.3.0, crossbeam-channel, rayon, sysinfo, nix 0.31.3 + libc 0.2.189, rustix (xattr),
-indicatif (headless CLI only), async-openai 0.41.3 + tokio (agent thread only), tiktoken-rs,
-serde / serde_json / toml, crc32fast, tempfile 3.27.0, fs4, fs-err, same-file, dirs, secrecy.
+dua-core 4.0.0, crossbeam-channel, sysinfo, libc 0.2.189 (raw FFI — the syscall layer),
+globset (policy/conflict globs), async-openai 0.41.3 + tokio (agent thread only),
+serde / serde_json / toml, crc32fast, tempfile 3.27.0, fs-err, dirs.
 The Tauri + Svelte GUI layer (per SPEC Part C, ADR-5/18) lives in `src-tauri/` + `app/` —
 ratatui/crossterm/unicode-width/signal-hook are SHELVED (GUI pivot) and appear only in
 SPEC Part D §1c for history.
 
 Per-platform additions behind `#[cfg]` gates ([09][10][11]): Windows — `windows` 0.62.2 or
 `windows-sys` 0.61.2 (FileRenameInfoEx / FlushFileBuffers / bulk enumeration), `winreg` 0.56.0;
-Linux — `rustix` `fs::renameat_with`/`syncfs`/`statx`, `libc` `renameat2` + `RENAME_NOREPLACE`;
-portable — `same-file` 1.0.6 (volume/file-index identity), `dirs` 6.0.0 (XDG/FOLDERID),
-`filetime` 0.2.29 (mtime preservation). Full version/license table: SPEC Part D §1f.
+Linux — `libc` `renameat2` + `RENAME_NOREPLACE` (there is no `rustix`/`nix` in the tree;
+the Linux syscall layer is raw `libc` too);
+portable — `dirs` 6.0.0 (XDG/FOLDERID), `xattr` 1.6.1 (unix evidence tags; `cfg(unix)`).
+`filetime` 0.2.29 was surveyed for cross-platform mtime preservation and is **not a dependency**:
+moves and restores are `rename` operations, which preserve the inode's timestamps without any
+explicit setter. Full version/license table: SPEC Part D §1f.
+
+**Dropped 2026-09-12 (audit):** `nix`, `rustix`, `fs4`, `same-file`, `walkdir`, `ignore`, `rayon`,
+`cargo_metadata`, `secrecy`, `reqwest`, `tiktoken-rs`, `backon` were declared but never
+referenced in `src/`, `tests/`, or `src-tauri/src/`. The live syscall layer is raw `libc`;
+single-writer locking is **std's `File::try_lock`** (stable 1.89 → `flock(2)`), not `fs4`/`nix`;
+volume identity is raw `st_dev`, not `same-file`; key redaction is a manual `impl Debug`,
+not `secrecy`; token preflight is the chars/4 heuristic, not `tiktoken-rs`; retry is
+async-openai's built-in `OpenAIRetryLayer`, not `backon`. Re-adopt any of these only with a caller
+in the same commit.
+
+**They are gone from `Cargo.toml`, not necessarily from `Cargo.lock`.** Five of the twelve still
+appear in `Cargo.lock` as *transitive* entries: `reqwest` 0.13.5 (async-openai's own transport)
+and `secrecy` 0.10.3 under `async-openai`; `walkdir` 2.5.0 and `same-file` 1.0.6 via
+`reqwest → rustls-platform-verifier → jni → walkdir → same-file` (an Android-target chain);
+`rustix` 1.1.4 via `tempfile` and `xattr`. The core lock holds 277 package entries (268 distinct
+crate names) resolving from 20 direct dependencies — 17 always-on, `tokio`/`async-openai` behind
+the `llm` feature, `xattr` behind `cfg(unix)`. That is expected and correct: the audit's
+claim is "no source file names them", not "no lock entry exists". Delete a lock entry only by
+removing the direct dep that requires it; hand-editing the lock is never right.
 
 ## 3. Module designs
 
@@ -461,12 +483,12 @@ justifies it. Fields are the contract; method bodies elided.
 | Aspect | Decision |
 |---|---|
 | Responsibility | walk chosen roots, aggregate per-dir stats, emit batches; never materialize dataless files; never follow symlinks; stay on one filesystem by default; report volume truth (raw free vs purgeable) |
-| Walker | dua-core 3.3.0 `walk_roots(roots, threads, Order::ParentFirst, opts, descend)` — metadata arrives with enumeration via `getattrlistbulk(2)` (one syscall per 64 KiB buffer; the macOS module requests mtime/flags/nlink/allocsize/clone-id in-bulk) [04 §dua] |
+| Walker | dua-core 4.0.0 `walk_roots(roots, threads, Order::ParentFirst, opts, descend)` — metadata arrives with enumeration via `getattrlistbulk(2)` (one syscall per 64 KiB buffer; the macOS module requests mtime/flags/nlink/allocsize/clone-id in-bulk) [04 §dua] |
 | Mount skipping | per-entry `MetadataExt::dev()` compare inside `descend`, not mount-table parsing; firmlink-safe — firmlinked `/`, `/Users`, `/System/Volumes/Data/...` share `st_dev` [05 §1][04 §4] |
 | Sizes | capture both apparent (`ATTR_FILE_DATALENGTH`/`len`) and allocated (`ATTR_FILE_DATAALLOCSIZE`/`st_blocks·512`); allocated is what purge actually frees and what the typed confirm shows [04 §5][05 §6] |
 | Dataless | read `SF_DATALESS` from `st_flags`/`getattrlist`; scan never opens content (reads fail `EDEADLK` under the OFF policy — fine, metadata-only) [05 §5] |
 | Snapshots | record `tmutil listlocalsnapshots` per scan for freed-space honesty [02 §3] |
-| Platform note | macOS keeps the dua-core `getattrlistbulk` walker as designed [04 §dua]. Portable baseline everywhere: `ignore` 0.4.33 `WalkParallel` (the only walker fully portable today [11 §5]); per-OS fast paths behind the same `DirStat` output — Linux `statx` birth-time/mtime via rustix [11 §7], Windows `GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk enumeration copied from dua-core's windows module [11 §5]. Linux adds mount resolution per candidate via `/proc/self/mountinfo` (fstype → `renameat2` availability), not just `st_dev` [10 §0][11 §4]. Windows: never follow reparse points/junctions; OneDrive subtrees stat-only; `\\?\` paths past 260 chars [09 §0][09 §3]. |
+| Platform note | macOS keeps the dua-core `getattrlistbulk` walker as designed [04 §dua]. Portable baseline everywhere: `ignore::WalkParallel` (the only walker fully portable today [11 §5]) — **not currently a dependency**; the fallback is pre-planned, not vendored (see §2.4 dropped list); per-OS fast paths behind the same `DirStat` output — Linux `statx` birth-time/mtime via raw `libc` [11 §7], Windows `GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk enumeration copied from dua-core's windows module [11 §5]. Linux adds mount resolution per candidate via `/proc/self/mountinfo` (fstype → `renameat2` availability), not just `st_dev` [10 §0][11 §4]. Windows: never follow reparse points/junctions; OneDrive subtrees stat-only; `\\?\` paths past 260 chars [09 §0][09 §3]. |
 
 ```rust
 pub struct ScanOptions { pub roots: Vec<PathBuf>, pub threads: usize,
@@ -536,10 +558,10 @@ default path), Homebrew [03 §5] (invoke `brew cleanup`, don't re-implement its 
 [03 §6] (sparse Docker.raw ⇒ `HandsOff` as a file, propose `docker system prune`), browsers
 [03 §7], generic caches [03 §8].
 
-Crates: rayon 1.12 (CPU-bound classify only — `par_bridge` carries a documented IO-iterator
-bottleneck warning [04]); rustix `fs::xattr` or libc `getxattr` [05]; cargo_metadata 0.23.1 to
-enumerate Rust workspace `target/` dirs correctly [03 §rec]; globset for user ignore globs
-[04].
+Crates: **no parallelism crate** — classify is single-threaded by design (`rayon` was proposed
+but is not a dependency; revisit only when profiling demands it [04]); xattr 1.6.1 or raw
+libc `getxattr` [05] (there is no `rustix` in the tree); workspace `target/` discovery is
+path/marker based (no `cargo_metadata`); globset 0.4.20 for policy deny-globs [04].
 
 ### 3.3 `plan/` — selection + manifest
 
@@ -598,10 +620,10 @@ pub fn recover(vols: &[VolumeInfo], ledger: &Ledger) -> RecoveryReport; // §5.2
 ```
 
 Crates: libc 0.2.189 raw decls (`renamex_np`, `renameatx_np`; define the missing consts
-`RENAME_NOFOLLOW_ANY=0x10`, `SF_DATALESS`, `UF_DATAVAULT` locally [05 §reusable]); nix 0.31.3
-(`fstatat`+`AtFlags`, `fcntl(F_FULLFSYNC)`, `Errno` mapping); fs4 flock; fs-err for ledger
-paths; `std::fs::sync_all()` already maps to `F_FULLFSYNC` on apple — no extra crate for the
-data fsync [08 §2].
+`RENAME_NOFOLLOW_ANY=0x10`, `SF_DATALESS`, `UF_DATAVAULT` locally [05 §reusable]);
+— this is the only syscall layer in the tree (`nix`/`rustix` are not dependencies); fs-err for
+ledger paths; `std::fs::sync_all()` already maps to `F_FULLFSYNC` on apple — no extra crate for
+the data fsync [08 §2].
 
 ### 3.5 `ledger/` — JSONL history + crash recovery
 
@@ -646,8 +668,9 @@ Privacy asymmetry (documented decision): `verdict`/`plan` recs store `path_hash`
 `apply`/`restore` recs store real paths — restore needs them, and the ledger is local-only;
 the LLM never reads it [08 risk #6][07 §privacy].
 
-Crates: crc32fast 1.5.1, serde_json (canonical `to_vec` as CRC input), fs4 1.1.0 (or
-`nix::fcntl::Flock`), tempfile 3.27.0 for compaction renames (we own the fsyncs — tempfile's
+Crates: crc32fast 1.5.1, serde_json (canonical `to_vec` as CRC input), **std `File::try_lock`**
+for the single-writer lock (stable 1.89 → `flock(2)`; no `fs4`/`nix` dependency — see
+`src/ledger.rs`), tempfile 3.27.0 for compaction renames (we own the fsyncs — tempfile's
 `persist` does NOT sync [08 §3]), fs-err. Rejected: `sled` (alpha line stalled since 2024-10;
 the ledger is simple enough to own) [08 §rec].
 
@@ -684,7 +707,7 @@ network; matches the WAL/crash-recovery ethos [07 §rig]):
 
 | Step | Meaning |
 |---|---|
-| `CallModel{turn, history}` | one `create_chat_completion` (stream:false — stream only the TUI text display [07 risks]); pre-check ctx fit with tiktoken [07 §context] |
+| `CallModel{turn, history}` | one `create_chat_completion` (stream:false — stream only the TUI text display [07 risks]); pre-check ctx fit with the chars/4 estimate (no tokenizer dep — see §2.4) [07 §context] |
 | `CallTools{calls}` | validate the `arguments` JSON strings (repair/skip/fail hooks; `tool_retry_limit=3` hashed per name+args) [07 §wire][07 risks] |
 | `Done{reason}` | `StopReason::{ModelStop, RequestedByTool, MaxTurns, TokenBudget, CostBudget, UserCancel, ToolFailLoop, ContextCap}` [07 §budget] |
 
@@ -706,7 +729,7 @@ truth (never local tokenizers for billing); per-call usage persisted to the ledg
 `config.budget`. Provider quirks handled: DeepSeek thinking-mode `reasoning_content` echo bloat
 (avoid thinking mode in agent loops), OpenRouter final usage-chunk shape deviation (an
 accounting frame, not a second turn), Ollama id-less tool calls (mint a synthetic id), lost
-final usage chunk (fall back to a tiktoken estimate marked "unverified" — never billed)
+final usage chunk (fall back to the chars/4 estimate marked "unverified" — never billed)
 [07 §providers][07 risks].
 
 Leak discipline [07 §privacy 5]: a CI test asserts `serde_json` of every outbound message
@@ -732,8 +755,9 @@ reload a past run; `janitor agent --resume <run_id>` (CLI) and the trajectory sc
 call `RunSnapshot::load()` and continue `next_step()` from the restored `RunState` [R5; 08 §5].
 
 Crates: async-openai 0.41.3 (typed types, `with_api_base` for DeepSeek/OpenRouter/Ollama/vLLM,
-built-in `SimpleRetryPolicy` 429/5xx + `Retry-After`), tokio (`rt-multi-thread` confined to
-this thread), tiktoken-rs 0.12 (preflight only), serde_json [07 §rec].
+built-in retry layer for 429/5xx + `Retry-After` — no `backon`), tokio (`rt-multi-thread`
+confined to this thread), serde_json; context-fit preflight uses the chars/4 estimate in
+`src/cost.rs` (no tokenizer dependency) [07 §rec].
 
 ### 3.8 `ui/` — GUI shell (UX-SPEC) + CLI fallback
 
@@ -769,7 +793,8 @@ pub fn load() -> Result<Config>; // dirs::config_dir()/disk-janitor/config.toml 
 pub fn redact(&self) -> String;  // safe debug/log form
 ```
 
-Crates: serde, toml, secrecy, dirs. The DeepSeek peak/off-peak hit/miss pricing split [07 §cost]
+Crates: serde, toml, dirs. API keys use a manual `impl Debug` redaction (no `secrecy`
+dependency — see §2.4). The DeepSeek peak/off-peak hit/miss pricing split [07 §cost]
 is modeled as multiple `ModelPrice` entries keyed by model name.
 
 
@@ -807,11 +832,12 @@ Per-OS `AtomicMove` impls [11 §1]:
 | Windows | open source with `DELETE` access (`FILE_FLAG_OPEN_REPARSE_POINT \| FILE_FLAG_BACKUP_SEMANTICS`), then `SetFileInformationByHandle(FileRenameInfoEx, Flags=0)` — no-clobber = *omit* `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` (0x1); POSIX_SEMANTICS (0x2) keeps replaced-file handles valid. Win10 1709+ per rust-lang#123985; [MS-FSCC] states no min version — runtime probe, never assumed | Win10 1709+: `REPLACE_IF_EXISTS \| POSIX_SEMANTICS` (atomic replace, old handles stay valid). Pre-1709: `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` — non-atomic w.r.t. open targets (`ERROR_ACCESS_DENIED`) — the exact two-tier fallback rust std uses | startup probe of `FileRenameInfoEx`; same-volume via `same-file` Handle equality (`dwVolumeSerialNumber`), not raw `st_dev`; `ERROR_NOT_SAME_DEVICE` ⇒ refuse cross-volume [09 §delta][11 §1/§4] |
 
 **Walker.** Trait `Walker { fn walk(opts: WalkOpts) -> DirStream }` with the same `DirStat`
-output contract on every OS: macOS = dua-core 3.3.0 `getattrlistbulk` module (unchanged, §3.1)
+output contract on every OS: macOS = dua-core 4.0.0 `getattrlistbulk` module (unchanged, §3.1)
 [04 §dua]; portable baseline = `ignore` 0.4.33 `WalkParallel` — the only fully-portable walker
-today — with gitignore semantics disabled for honest byte accounting [11 §5]; per-OS fast paths
-behind the same output, following dua-core's in-tree precedent: Linux `statx` (rustix
-`StatxFlags::BTIME` for birth time; Unix `MetadataExt` `st_dev`/`st_nlink`/`st_blocks` portable
+today, **pre-planned and NOT currently a dependency** (see §2.4) — with gitignore semantics
+disabled for honest byte accounting [11 §5]; per-OS fast paths
+behind the same output, following dua-core's in-tree precedent: Linux `statx` via raw `libc`
+(birth time; Unix `MetadataExt` `st_dev`/`st_nlink`/`st_blocks` portable
 across Unix) [11 §4/§7], Windows `GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk
 enumeration (dua-cli measured "30x and more performance on Windows" since 2.41) [11 §5].
 Windows walker rules: never descend reparse points (`IO_REPARSE_TAG_MOUNT_POINT` junctions —
@@ -825,7 +851,8 @@ fn same_volume(&self, a: &Path, b: &Path) -> bool }`. macOS: sysinfo `Disks` + C
 keys, `ImportantUsage` preferred (unchanged §3.1) [04 §sysinfo]. Windows:
 `BY_HANDLE_FILE_INFORMATION.dwVolumeSerialNumber` / `FILE_ID_INFO` replaces `st_dev`; the
 `same-file` crate's `Handle` equality (volume serial + file index, with its documented
-file-index-aliasing fallback) is the portable identity check, valid on UNC paths too [09 §0][11 §4].
+file-index-aliasing fallback) was the survey's portable-identity candidate — **not adopted**;
+the shipped check is a raw `st_dev`/file-index compare. Valid on UNC paths too [09 §0][11 §4].
 Linux: `statvfs`/`statfs` + mountinfo resolution; `st_dev` compare suffices including bind
 mounts [10 §0][11 §4].
 
@@ -852,10 +879,15 @@ request). This is the documented Windows guarantee delta of §5.
 
 Crates (full version/license table in SPEC Part D §1f): Windows-gated `windows` 0.62.2 /
 `windows-sys` 0.61.2 + `winreg` 0.56.0 behind `#[cfg(windows)]` (the crates do not compile
-their Win32 modules elsewhere — keep the cfg at the module boundary) [09 §crates]; Linux-gated
-`rustix` `fs::renameat_with`/`syncfs`/`statx` + `libc` `renameat2` [10 §crates][11 §rec];
-portable `same-file` 1.0.6, `dirs` 6.0.0, `filetime` 0.2.29 (mtime preservation across
-move/restore) [11 §rec].
+their Win32 modules elsewhere — keep the cfg at the module boundary) [09 §crates]; Linux-gated raw `libc` `renameat2`/`statx`/`syncfs` (no `rustix` in the tree) [10 §crates][11 §rec];
+`same-file` 1.0.6 and `filetime` 0.2.29 are surveyed-but-**not-adopted** research records (raw
+`st_dev` in the tree; no source file sets timestamps — a move or restore is a `rename`, which
+carries the inode's times with it), plus `dirs` 6.0.0 [11 §rec].
+
+> These per-OS crates are the design plan for the cross-platform port; the shipped tree is
+> macOS-only today. `grep -rn 'cfg(windows)\|cfg(target_os = "linux")' src src-tauri/src`
+> returns nothing — the only per-OS modules present are `scan/platform/macos.rs`,
+> `classify/macos.rs`, and `execute/macos.rs`.
 
 ## 4. Data flow — one scenario end-to-end
 
@@ -1118,9 +1150,10 @@ Dependency notes:
   and Linux builds are compile-checked locally, not behavior-tested; Windows syscall paths
   (`FileRenameInfoEx` probes, junction handling) are untestable until a windows runner exists,
   which is why M3/M4 keep Windows on the portable baseline [09 risks #1][11 §5].
-- dua-core is ~10 days old as a standalone crate (first release Aug 2026, ~10k downloads,
-  v3.3.0) — pin the exact version, audit `crates/dua-lib/src/macos` unsafe (`attrlist` buffers)
-  before shipping; the pre-planned fallback is `ignore::WalkParallel` [04 risks].
+- dua-core was ~10 days old as a standalone crate when first surveyed (first release Aug 2026,
+  ~10k downloads, then v3.3.0; now pinned `=4.0.0` per owner D-37) — pin the exact version,
+  audit `crates/dua-lib/src/macos` unsafe (`attrlist` buffers) before shipping; the pre-planned
+  fallback is `ignore::WalkParallel` [04 risks].
 - M3's purge modal depends on M2's byte-count contract; M4's agent depends on M1+M2+M3 tool
   surfaces being stable.
 
@@ -1128,7 +1161,7 @@ Dependency notes:
 
 | Module | Project | Borrowed | License (verified) | Note |
 |---|---|---|---|---|
-| scan | Byron/dua-cli → dua-core 3.3.0 | whole walker: work-stealing pool, drop-to-cancel, `getattrlistbulk` macOS module, `descend` device check, `Throttle` redraw gating | MIT [04 §rec] | jwalk is dead — README redirects to dua-core [04] |
+| scan | Byron/dua-cli → dua-core 4.0.0 | whole walker: work-stealing pool, drop-to-cancel, `getattrlistbulk` macOS module, `descend` device check, `Throttle` redraw gating | MIT [04 §rec] | jwalk is dead — README redirects to dua-core [04] |
 | scan | dundee/gdu | ticker→atomic-snapshot→draw progress loop; cancel-keeps-partial-results; OSC 9;4 terminal progress; dataless prevention | MIT [04] | |
 | scan | GuillaumeGomez/sysinfo | volume enumeration + `ImportantUsage` preference | MIT [04] | |
 | classify | tbillington/kondo | known-project-structure discovery per language | MIT [03 §rec] | direct precedent for path rules |
@@ -1141,8 +1174,8 @@ Dependency notes:
 | execute | Stebalien/tempfile | `persist_noclobber` atomic-rename pattern (we add the fsyncs) | MIT/Apache [08 §3] | |
 | execute | ArturKovacs/trash | per-volume macOS trash semantics — reference only, NOT used for moves | MIT [05 §rec] | |
 | ledger | git (design ref only) | content addressing + trailer-checksum ideas | GPL-2.0 — read-only [08 §7] | do not import code |
-| agent | 0xPlaygrounds/rig | sans-IO `AgentRun` state machine; `Tool`/`ToolDefinition`; `max_turns` budget | MIT [07 §rig] | |
-| agent | bosun-ai/swiftide | `StopReason` enum + control tools (`Stop`→`record_verdict`); `tool_retry_limit` hashed per call | MIT [07 §rig] | |
+| agent | 0xPlaygrounds/rig | sans-IO `AgentRun` state machine; `Tool`/`ToolDefinition`; `max_turns` budget | MIT [07 §rig] | **design reference only — not a dependency** |
+| agent | bosun-ai/swiftide | `StopReason` enum + control tools (`Stop`→`record_verdict`); `tool_retry_limit` hashed per call | MIT [07 §rig] | **design reference only — not a dependency** |
 | agent | 64bit/async-openai + openai/openai-node | typed chat-completions; `finish_reason` union; `include_usage` semantics | MIT / Apache-2.0 [07] | |
 | ui | Byron/dua-cli TUI | event-loop skeleton; name-keyed selection restore; `ctrl+c` keymap | MIT [06 §rec] | |
 | ui | gitui-org/gitui | multi-source `select!` loop; `any_work_pending()` gating | MIT [06 §rec] | |
@@ -1155,7 +1188,8 @@ Dependency notes:
 
 | Repo | License | Posture |
 |---|---|---|
-| dua-cli / dua-core, kondo, cargo-sweep, cargo-cache, npkill, gdu, ncdu, gitui, ratatui, crossterm, async-openai, rig, swiftide, tempfile, crc32fast, fs4, nix, libc, rustix, sysinfo, serde*, walkdir, ignore/globset, rayon, crossbeam, signal-hook, unicode-width, indicatif, tiktoken-rs, fs-err, same-file | MIT / Apache-2.0 / Unlicense / PD | vendoring & borrowing safe — verify each per-file at adoption |
+| **Shipped multi-license set:** dua-cli/dua-core, kondo, cargo-sweep, cargo-cache, npkill, gdu, ncdu, gitui, async-openai, tempfile, crc32fast, libc, xattr, sysinfo, serde*, globset, crossbeam, fs-err, clap, toml, chrono, uuid, dirs, thiserror, anyhow, tokio | MIT / Apache-2.0 / Unlicense / PD | vendoring & borrowing safe — verify each per-file at adoption |
+| **Surveyed but NOT shipped** (design references, or dropped in the 2026-09-12 audit): rig, swiftide, fs4, nix, rustix, walkdir, ignore, rayon, tiktoken-rs, same-file, secrecy, backon, cargo_metadata, reqwest | MIT / Apache-2.0 / Unlicense | no code imported — see §1 banner and Part D §2.4. Dropped from `Cargo.toml`; `reqwest`/`secrecy`/`walkdir`/`same-file`/`rustix` persist in `Cargo.lock` as async-openai transitives, and `cargo_metadata` in `src-tauri/Cargo.lock` via `tauri-utils` (⊘ ≠ absent from the lock) |
 | Pearcleaner | Apache-2.0 + Commons Clause v1.0 | read for behavior; do not vendor into a product [02 §rec] |
 | GrandPerspective, git, tw93/Mole | GPL-2.0 / GPL-3.0 | read as design reference only — never import code [02 §rec][03 §rec] |
 | apple/darwin-xnu | APSL-2.0 | reference for syscall semantics; do not paste code [05 §reusable] |
@@ -1551,7 +1585,7 @@ ledger records, not a shadow state [SPEC Part B §3.5].
 │                                                                       │
 │  助手 Agent (R3)                                                      │
 │    endpoint   [https://api.deepseek.com/v1 ]   模型 model [deepseek-chat ] │
-│    API key    [•••••••••••• ]  (secrecy 存储; 永不写入日志 [SPEC Part B §3.9]) │
+│    API key    [•••••••••••• ]  (仅存本机配置; 永不写入日志 [SPEC Part B §3.9]) │
 │    预算 budget [ $2.00 ] [ 200k tok ] [ 40 turns ]  到达即中断        │
 │                    interrupt at cap [ADR-9][SPEC Part B §3.7]              │
 │                                                                       │
@@ -1857,6 +1891,12 @@ CN-primary UI with full EN switcher (D-31) keeps the localization differentiator
 # Part D — Dependencies (crate plan)
 
 Verified 2026-08-30 (core/lanes) and 2026-08-31 (GUI layer §1g, INFERENCE batch in §3).
+**Amended 2026-09-12 (dependency audit):** the §1 tables are the *evaluated-candidate catalog*,
+not the shipped set — rows prefixed **⊘** are **NOT ADOPTED**: absent from `Cargo.toml` and never
+named by any source file (whether they were declared-then-dropped, or surveyed and never
+declared). ⊘ never means "absent from `Cargo.lock`", which also carries transitive entries. The
+authoritative shipped set is the §2.4 live-crate list and `Cargo.toml` (reproduced in §3 below).
+See §2.4 "Dropped 2026-09-12 (audit)".
 Every version/license claim cites a research note:
 [04] `docs/research/04-rust-walk-and-metadata-crates.md` · [05] `05-macos-fs-edge-cases.md` ·
 [06] `06-tui-stack-ratatui.md` · [07] `07-llm-agent-loop-rust.md` · [08]
@@ -1872,33 +1912,47 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 
 ## 1. Crates table
 
+> **Read this table as the evaluated-candidate catalog, not the shipped dependency set.**
+> Rows record what the 2026-08 research surveyed, with versions/licenses as of that survey
+> (research notes [04]–[13] are dated evidence and are NOT rewritten retroactively).
+> **The authoritative shipped set is §2.4 + `Cargo.toml`.**
+> Rows prefixed **⊘** are **NOT ADOPTED** — they were either declared in `Cargo.toml` but never
+> referenced by any source file and dropped 2026-09-12: `ignore`, `walkdir`, `rayon`, `nix`,
+> `rustix`, `fs4`, `same-file`, `cargo_metadata`, `secrecy`, `reqwest`, `tiktoken-rs`, `backon`
+> (12 crates); or surveyed and never declared at all — `tower`, `fs2`, `jwalk`, `dashmap`,
+> `num_cpus`, `indicatif`, `filetime`, and the whole shelved `tui` stack. `reqwest` remains a
+> *transitive* dependency of `async-openai`; so do `secrecy`, `walkdir`, `same-file` (via
+> `reqwest → rustls-platform-verifier → jni`) and `rustix` (via `tempfile`/`xattr`) — **⊘ means
+> "absent from `Cargo.toml` and never named by source", not "absent from `Cargo.lock`"**.
+> Re-adopt any of these only with a real caller in the same commit.
+
 ### 1a. Scan — walking + metadata
 
 | Crate | Ver (2026-08) | License | Purpose / verdict | Feature flags | Module | Alternatives |
 |---|---|---|---|---|---|---|
-| dua-core | 3.3.0 (2026-08-28) [04] | MIT [04] | PRIMARY parallel walker: crossbeam work-stealing pool (no rayon), macOS `getattrlistbulk` bulk metadata, streaming iterator, drop-to-cancel, `descend` predicate per-entry `st_dev` mount skip [04] | — | scan | ignore 0.4.33 `WalkParallel` [04] |
-| ignore | 0.4.33 (2026-08-04) [04] | Unlicense OR MIT [04] | gitignore/glob exclusion (`gitignore::GitignoreBuilder` usable standalone) + fallback parallel walker; only maintained walker with built-in gitignore + `same_file_system` [04] | — | scan, classify, policy | globset raw [04] |
-| globset | 0.4.20 (2026-08-04) [04] | Unlicense OR MIT [04] | fast glob-set matching for user ignore/policy globs; shares engine with `ignore` [04] | — | classify, policy | — |
-| walkdir | 2.5.0 [04] | Unlicense/MIT [04] | serial ordered traversal base; fallback for sorted/serial scans; stable (no release since 2024-03) [04][05] | — | scan | fs + recursion [05] |
-| jwalk | 0.9.0 (2026-08-05) [04] | MIT [04] | REJECTED — README: "Unmaintained … use dua-core"; no device check in source, no gitignore, `skip_hidden` on by default [04] | — | — (none) | dua-core [04] |
+| dua-core | 4.0.0 (bumped from 3.3.0, owner D-37) [04] | MIT [04] | PRIMARY parallel walker: crossbeam work-stealing pool (no rayon), macOS `getattrlistbulk` bulk metadata, streaming iterator, drop-to-cancel, `descend` predicate per-entry `st_dev` mount skip [04] | — | scan | ⊘ ignore 0.4.33 `WalkParallel` [04] |
+| ⊘ ignore | 0.4.33 (2026-08-04) [04] | Unlicense OR MIT [04] | **NOT ADOPTED** — gitignore/glob exclusion + fallback parallel walker; research record only (dua-core is the only walker in the tree) [04] | — | — (none) | globset raw [04] |
+| globset | 0.4.20 (2026-08-04) [04] | Unlicense OR MIT [04] | fast glob-set matching for policy deny-globs (classify/policy) [04] | — | classify, policy | — |
+| ⊘ walkdir | 2.5.0 [04] | Unlicense/MIT [04] | **NOT ADOPTED** — serial ordered traversal; research record only [04][05] | — | — (none) | fs + recursion [05] |
+| ⊘ jwalk | 0.9.0 (2026-08-05) [04] | MIT [04] | **NOT ADOPTED** — REJECTED: README "Unmaintained … use dua-core"; no device check in source, no gitignore, `skip_hidden` on by default [04] | — | — (none) | dua-core [04] |
 | crossbeam-channel | 0.5.16 [04] | MIT OR Apache-2.0 [04] | scan→ui event channel + `select!` loop; the dua/gdu progress backbone [04][06] | — | scan, ui | std mpsc (no select) [06]; tokio mpsc (drags tokio in for no benefit) [06] |
-| num_cpus | 1.17.0 [04] | MIT OR Apache-2.0 [04] | worker count for dua-core `threads`; dua itself depends on it; `std::thread::available_parallelism` covers most needs [04] | — | scan | std [04] |
+| ⊘ num_cpus | 1.17.0 [04] | MIT OR Apache-2.0 [04] | **NOT ADOPTED** — worker count for dua-core `threads`; never declared. `std::thread::available_parallelism` covers it [04] | — | — (none) | std [04] |
 | sysinfo | 0.39.6 [04] | MIT [04] | volume list, capacity, removable/read-only flags (`Disks::new_with_refreshed_list`, `DiskRefreshKind` to trim cost) [04] | — | scan, ui | libc `statfs` manual [04] |
-| rayon | 1.12.0 [04] | MIT OR Apache-2.0 [04] | parallel map for CPU-bound classify only; `par_bridge()` is a documented bottleneck for IO iterators [04] | — | classify | std threads + channel [04] |
-| dashmap | 6.2.1 [04] | MIT [04] | ONLY if classifier threads share maps; avoid by keeping scan→classify channel-based (MSRV 1.70) [04] | — | classify | `RwLock<HashMap>` [04] |
+| ⊘ rayon | 1.12.0 [04] | MIT OR Apache-2.0 [04] | **NOT ADOPTED** — parallel map for CPU-bound classify; classify ships single-threaded [04] | — | — (none) | std threads + channel [04] |
+| ⊘ dashmap | 6.2.1 [04] | MIT [04] | **NOT ADOPTED** — only if classifier threads share maps; never declared. Avoided by keeping scan→classify channel-based (MSRV 1.70) [04] | — | — (none) | `RwLock<HashMap>` [04] |
 
 ### 1b. macOS syscall / execute / ledger stack
 
 | Crate | Ver (2026-08) | License | Purpose / verdict | Feature flags | Module | Alternatives |
 |---|---|---|---|---|---|---|
 | libc | 0.2.189 [04][05] (0.2.187 stable line [08]) | MIT OR Apache-2.0 [05][08] | raw FFI: `renamex_np`/`renameatx_np`, `clonefile`, `getattrlist(bulk)`, xattr family, `F_FULLFSYNC=51`, `F_BARRIERFSYNC=85`, `RENAME_EXCL=4`; MISSING consts to define locally: `SF_DATALESS`, `UF_DATAVAULT`, `SF_FIRMLINK`, `RENAME_NOFOLLOW_ANY`, `RENAME_RESOLVE_BENEATH`, `RENAME_SECLUDE`, `IOPOL_*` [05]; `setiopolicy_np` NOT exported — own `extern "C"` block [04] | — | execute, scan, ledger | hand-written `extern "C"` blocks [05] |
-| nix | 0.31.3 [05][08] | MIT [05][08] | typed errno + `fstatat`+`AtFlags`, `fcntl(F_FULLFSYNC)`/`F_BARRIERFSYNC`/`F_GETPATH(_NOFIRMLINK)` (apple targets), `FileFlag` bitflags (lacks `SF_DATALESS`/`UF_DATAVAULT`/`SF_FIRMLINK`), `Flock` RAII; `RenameFlags` is Linux-only; NO `renamex_np` [05][08] | `fs` needed for fcntl enums [05] | execute, ledger | rustix [05] |
-| rustix | 1.1.4 [05] | Apache-2.0 OR MIT OR Apache-2.0-WITH-LLVM-exception [05] | safe fd/path APIs + full `fs::xattr` module; `Arg` path trait avoids UB on interior NULs; no macOS rename-with-flags [05] | — | execute | xattr crate [05] |
-| xattr | 1.6.1 [05] | MIT OR Apache-2.0 [05] | minimal cross-platform xattr get/set/list/remove; fine if rustix feels heavy [05] | — | execute | rustix `fs::xattr` [05] |
+| ⊘ nix | 0.31.3 [05][08] | MIT [05][08] | **NOT ADOPTED** — typed errno/fcntl/`Flock` wrappers; the tree uses raw `libc` + std `File::try_lock` [05][08] | — | — (none) | rustix, raw libc [05] |
+| ⊘ rustix | 1.1.4 [05] | Apache-2.0 OR MIT OR Apache-2.0-WITH-LLVM-exception [05] | **NOT ADOPTED** — safe fd/path APIs, `fs::xattr`; `xattr` crate covers the actual need [05] | — | — (none) | xattr crate [05] |
+| xattr | 1.6.1 [05] | MIT OR Apache-2.0 [05] | minimal cross-platform xattr get/set/list/remove — used for the `com.apple.quarantine` probe [05] | — | execute, scan | raw libc `getxattr` [05] |
 | tempfile | 3.27.0 (2026-03-11) [08] | MIT OR Apache-2.0 [08] | atomic temp file + rename for WAL compaction/snapshot replace; `persist_noclobber` atomic on Apple via `renameat_with(NOREPLACE)` since 3.18.0; docs: does NOT fsync for you [08] | — | ledger, execute | hand-rolled libc `renamex_np` [08] |
 | crc32fast | 1.5.1 (2026-08-22) [08] | MIT OR Apache-2.0 [08] | per-record CRC32 framing of JSONL ledger/WAL records; SIMD + streaming `Hasher` [08] | — | ledger | `crc` crate (more variants, slower) [08] |
-| fs4 | 1.1.0 [08] | MIT OR Apache-2.0 [08] | advisory `flock` wrapper (rustix-based); preferred over fs2; sync feature MSRV 1.75 [08] | sync MSRV 1.75 [08] | ledger | fs2 0.4.3 [08]; `nix::fcntl::Flock` [08] |
-| fs2 | 0.4.3 [08] | MIT OR Apache-2.0 [08] | advisory lock reference / unmaintained-ish predecessor; keep as documented fallback [08] | — | ledger | fs4 [08] |
+| ⊘ fs4 | 1.1.0 [08] | MIT OR Apache-2.0 [08] | **NOT ADOPTED** — advisory `flock` wrapper; the shipped lock is std `File::try_lock` (stable 1.89 → `flock(2)`) at `src/ledger.rs` [08] | — | — (none) | fs2 0.4.3 [08]; `nix::fcntl::Flock` [08] |
+| ⊘ fs2 | 0.4.3 [08] | MIT OR Apache-2.0 [08] | **NOT ADOPTED** — advisory-lock predecessor; never declared [08] | — | — (none) | std `File::try_lock` [08] |
 | fs-err | 3.3.1 (2026-07-03) [04][08] | MIT OR Apache-2.0 [04][08] | drop-in `std::fs` with op + path in error messages — for ledger/WAL/manifest IO, NOT the hot walk path [04][08] | optional `tokio`/`path_facts` features [04] | ledger, execute, config | manual `map_err` [04] |
 | trash | 5.2.6 [05] | MIT [05] | NOT for quarantine moves (Finder-Trash semantics, not our WAL); optional interop to show where Apple trash lives [05] | — | execute (optional) | none (skip) [05] |
 
@@ -1910,19 +1964,19 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 | crossterm | 0.29.0 [06] | MIT [06] | raw mode, alt screen, events, SIGWINCH→Resize; MUST pin "0.29" — ratatui 0.30 hard-depends on it (non-optional); two majors in one tree = lost events / broken raw-mode restore [06] | `event-stream` opt-in (not needed; threads+channels) [06] | ui | termion 4.0.6 (MIT, Unix-only; no poll/timeout, no Resize events) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
 | unicode-width | 0.2.2 [06] | MIT OR Apache-2.0 [06] | correct cell widths for CJK/emoji filenames (Chinese paths render); column alignment + truncation via `UnicodeWidthStr::width()`; dua pulls 0.2 under its tui feature [06] | — | ui | unicode-segmentation 1.13.3 (grapheme clustering; needed too if truncating mid-cluster) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
 | signal-hook | 0.4.4 [06] | MIT OR Apache-2.0 [06] | real SIGINT/SIGTERM/SIGTSTP routing (belt-and-braces cancel path); crossterm itself depends on 0.3.17 for SIGWINCH [06] | mio integration optional [06] | ui, execute | `libc::sigaction` directly (unsafe, easy to get wrong) [06] | ~~shelved (TUI→GUI pivot, ADR-5/18)~~ |
-| indicatif | 0.18.6 [04][06] | MIT [04][06] | progress bars for NON-TUI CLI mode only (plan/apply/purge subcommands); draws to stderr, max 20 refreshes/s, `abandon_with_message` on cancel; NEVER inside the ratatui loop [04][06] | — | ui (cli mode), plan | hand-rolled `\r`-updates [06]; ratatui `Gauge`/`LineGauge` in TUI [06] | retained — headless CLI progress (D-08 CLI subset kept; ADR-5/18 pivot) |
+| ⊘ indicatif | 0.18.6 [04][06] | MIT [04][06] | **NOT ADOPTED** — progress bars for NON-TUI CLI mode only (plan/apply/purge subcommands); draws to stderr, max 20 refreshes/s, `abandon_with_message` on cancel; NEVER inside the ratatui loop [04][06] | — | ui (cli mode), plan | hand-rolled `\r`-updates [06]; ratatui `Gauge`/`LineGauge` in TUI [06] | never declared — the CLI prints plain lines (2026-09-12 audit) |
 
 ### 1d. Agent / LLM stack (feature `llm`)
 
 | Crate | Ver (2026-08) | License | Purpose / verdict | Feature flags | Module | Alternatives |
 |---|---|---|---|---|---|---|
-| reqwest | 0.13.4 (2026-05) [07] | MIT OR Apache-2.0 [07] | HTTP client; rustls DEFAULT since 0.13 (aws-lc-rs provider, roots via `rustls-platform-verifier`); built-in `ClientBuilder::retry(policy)` since 0.12.23; no native-tls/OpenSSL anywhere [07] | default = rustls; `query`/`form` now opt-in; enable `json` explicitly (verify at build time); `rustls-no-provider` if ring provider wanted [07] | agent | hyper + hyper-rustls [07] |
+| ⊘ reqwest | 0.13.5 [07] | MIT OR Apache-2.0 [07] | **TRANSITIVE ONLY** — the HTTP client `async-openai` uses; not a direct dependency (source never names `reqwest::`); lockfile version as of 2026-09-12 [07] | via async-openai (rustls default; `json` for chat-completions) [07] | — (transitive) | hyper + hyper-rustls [07] |
 | async-openai | 0.41.3 (2026-07-31) [07] | MIT [07] | typed chat-completions client: tool-calling types, `CompletionUsage` (+ cached/reasoning token details), streaming usage chunk via `stream_options.include_usage`, `OpenAIConfig::with_api_base` (DeepSeek/OpenRouter/Ollama/vLLM), built-in `SimpleRetryPolicy` (429/5xx + Retry-After); default `rustls` [07] | `default = ["rustls"]`; fine-grained: `chat-completion`, `middleware` (on tower), `byot` — compile in only chat-completions to keep binary lean [07] | agent | hand-roll reqwest+serde_json [07] |
-| reqwest-eventsource | 0.6.0 [07] | MIT OR Apache-2.0 [07] | SSE with auto-reconnect — only if hand-rolling chat JSON without async-openai; last release 2024-03, stable but aging [07] | — | agent (alternative path) | eventsource-stream + manual reconnect [07] |
-| eventsource-stream | 0.2.3 [07] | MIT OR Apache-2.0 [07] | pure SSE Stream adapter used by async-openai internally; if using async-openai you never touch SSE crates; pick ONE of the two, never stack both [07] | — | agent (alternative path) | reqwest-eventsource [07] |
-| tiktoken-rs | 0.12.0 [07] | MIT [07] | OpenAI-model token preflight estimates ONLY (`o200k_base`, `o200k_harmony`, `cl100k_base`); never for billing — DeepSeek/Ollama use own BPE, estimates labeled approximate [07] | per-encoding features [07] | agent | approx char/4 heuristic [07] |
-| backon | 1.6.0 [07] | Apache-2.0 [07] | retry wrapper for tool calls/connect errors; `ExponentialBuilder`/`ConstantBuilder`/`FibonacciBuilder`, `.when()`/`.notify()`, Retry-After support [07] | — | agent | tower::retry [07] |
-| tower | 0.5.3 [07] | MIT [07] | retry/budget layer primitives (async-openai middleware is built on it); pull in only if not using backon [07] | — | agent | backon [07] |
+| ⊘ reqwest-eventsource | 0.6.0 [07] | MIT OR Apache-2.0 [07] | **NOT ADOPTED** — never declared; would only be needed when hand-rolling chat JSON without async-openai; last release 2024-03 [07] | — | — (none) | eventsource-stream + manual reconnect [07] |
+| `eventsource-stream` | 0.2.3 [07] | MIT OR Apache-2.0 [07] | **TRANSITIVE** — pure SSE Stream adapter compiled in by `async-openai`'s chat path (`cargo tree -e normal --features llm` shows it under async-openai); not named in source, and the `reqwest-eventsource` alternative is never stacked with it [07] | — | — (transitive) | reqwest-eventsource [07] |
+| ⊘ tiktoken-rs | 0.12.0 [07] | MIT [07] | **NOT ADOPTED** — token preflight; the shipped estimate is the chars/4 heuristic in `src/cost.rs` (labeled approximate, never billed) [07] | — | — (none) | approx char/4 heuristic [07] |
+| ⊘ backon | 1.6.0 [07] | Apache-2.0 [07] | **NOT ADOPTED** — retry wrapper; retry is `async-openai`'s built-in retry layer (an outer loop would only add latency) [07] | — | — (none) | tower::retry [07] |
+| ⊘ tower | 0.5.3 [07] | MIT [07] | **TRANSITIVE ONLY** — retry/layer primitives; not a direct dependency and the `middleware` feature is not enabled. It still lands in the lock via `reqwest 0.13.5 → tower-http`, not via us [07] | — | — (transitive) | backon [07] |
 | tokio | 1.53.1 [07] | MIT OR Apache-2.0 [07] | async runtime for the agent loop only (reqwest/async-openai need it); need only `rt-multi-thread` + `macros` + `sync`; NO tokio in scan/ui/ledger paths [07] | `rt-multi-thread`, `macros`, `sync` — skip full/default [07] | agent | smol [07] |
 | serde_json | 1.0.151 [08] | MIT OR Apache-2.0 [08] | wire-format (de)serialization + JSONL ledger records; canonical `to_vec` for CRC input; tool `arguments` is a JSON string [07][08] | — | agent, ledger, config | — |
 | serde | 1.0.229 [08] | MIT OR Apache-2.0 [08] | derive for ledger/plan/config types (MIT OR Apache-2.0 per crates.io) [02][08] | `derive` | agent, ledger, config | — |
@@ -1945,8 +1999,13 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 
 ### 1f. Platform-gated dependencies (notes 09–11, verified 2026-08-30)
 
-Every row is `#[cfg]`-gated per OS; the `windows`/`winreg` crates do not compile their Win32
-modules on other targets — keep the cfg at the module boundary [09 §crates].
+> **Design plan, not shipped state.** The 2026-08 survey's per-OS candidate set is recorded here
+> for the cross-platform port; the shipped tree is macOS-only — `grep -rn 'cfg(windows)\|cfg(target_os = "linux")' src src-tauri/src`
+> returns nothing, and only `scan/platform/macos.rs`, `classify/macos.rs`, `execute/macos.rs`
+> exist. Rows prefixed **⊘** are NOT ADOPTED (research records); the rest are the port's plan.
+
+When the port lands, every row is `#[cfg]`-gated per OS; the `windows`/`winreg` crates do not
+compile their Win32 modules on other targets — keep the cfg at the module boundary [09 §crates].
 
 #### Windows (`[target.'cfg(windows)'.dependencies]`)
 
@@ -1955,16 +2014,16 @@ modules on other targets — keep the cfg at the module boundary [09 §crates].
 | `windows` | 0.62.2 [09][11] | MIT OR Apache-2.0 [09][11] | PRIMARY Win32 bindings: `SetFileInformationByHandle`/`FileRenameInfoEx` (no-clobber = omit `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` 0x1; POSIX_SEMANTICS 0x2), `FlushFileBuffers` (WAL durability), `MoveFileExW` (pre-1709 fallback), `GetTempPathW`, `CreateFileW`, `BY_HANDLE_FILE_INFORMATION`, `FileIdBothDirInfo` bulk enumeration, `FOLDERID_*` | official microsoft-rs bindings; versions/licenses via crates.io API 2026-08-30 [09][11]; feature sets `Win32::Storage::FileSystem` + `Win32::System::Threading` [11] |
 | `windows-sys` | 0.61.2 [09] | MIT OR Apache-2.0 [09] | raw-bindings alternative for the same calls — cheaper compile; same source of truth (std itself uses its rename constants) | pick ONE of windows/windows-sys; std's two-tier rename (MoveFileExW → FileRenameInfoEx) is the reference implementation [11] |
 | `winreg` | 0.56.0 [09] | MIT [09] | enumerate `HKLM\…\Explorer\VolumeCaches` (cleanmgr handler discovery) + `HKCU\…\Lxss` `BasePath` (WSL vhdx locations) | thin registry wrapper |
-| `same-file` | 1.0.6 [09][11] | Unlicense/MIT [09][11] | same-volume check via `BY_HANDLE_FILE_INFORMATION` volume-serial compare; `Handle` equality (volume serial + file index) works on UNC paths too | portable; also listed under cross-platform |
+| ⊘ `same-file` | 1.0.6 [09][11] | Unlicense/MIT [09][11] | **NOT ADOPTED** — same-volume check; the macOS path compares raw `st_dev` [11 §4] | research record only [11 §4] |
 | `trash` (optional) | 5.2.6 [05][11] | MIT [05][11] | Windows backend = `IFileOperation` COM (`FOF_NO_UI \| FOF_ALLOWUNDO \| FOF_WANTNUKEWARNING`) — Recycle Bin as purge-time handoff ONLY, never the restore path | COM apartment feature flags `coinit_*` [11 §6] |
 
 #### Linux (`[target.'cfg(target_os = "linux")'.dependencies]`)
 
 | Crate | Ver (2026-08) | License | Purpose / verdict | Notes |
 |---|---|---|---|---|
-| `rustix` | 1.1.4 [05][10][11] | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT [05][10][11] | `fs::renameat_with` (`RenameFlags::NOREPLACE` — the syscall layer for `renameat2` where the glibc wrapper is missing), `fs::syncfs`, `fs::statx` (birth time via `StatxFlags::BTIME`) | libc-free syscall layer; already in the core table for xattr — same version, no new dep [10][11] |
+| ⊘ `rustix` | 1.1.4 [05][10][11] | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT [05][10][11] | **NOT ADOPTED (research record)** — `fs::renameat_with`/`syncfs`/`statx` would be the libc-free Linux syscall layer; the tree uses raw `libc` | raw `libc` [11] |
 | `libc` | 0.2.189 [04][05][08][10][11] | MIT OR Apache-2.0 [10][11] | `renameat2` fn + `RENAME_NOREPLACE=1`/`RENAME_EXCHANGE=2`/`RENAME_WHITEOUT=4` constants (gnu module) | already the core FFI dep; on Linux it gains renameat2/statx duty [11] |
-| `nix` | 0.31.3 [05][08][10] | MIT [05][08][10] | `statvfs`, xattr, mount resolution, `renameat2` wrappers where libc provides them | platform-gate with `#[cfg(target_os = "linux")]` [10] |
+| ⊘ `nix` | 0.31.3 [05][08][10] | MIT [05][08][10] | **NOT ADOPTED (research record)** — `statvfs`/xattr/mount-resolution wrappers; the tree uses raw `libc` | raw `libc` [10] |
 
 Linux FS-matrix caveat [10 §0][11 §1]: `renameat2(RENAME_NOREPLACE)` support is kernel/FS-gated
 (ext4 ≥3.15, btrfs/tmpfs ≥3.17, xfs ≥4.0, many more ≥4.9; **NFS: unsupported** — `nfs_rename()`
@@ -1977,11 +2036,11 @@ not re-verified).
 
 | Crate | Ver (2026-08) | License | Purpose / verdict | Notes |
 |---|---|---|---|---|
-| `same-file` | 1.0.6 [04][09][10][11] | Unlicense/MIT [09][10][11] | same-volume / hardlink identity: Unix `(st_dev, st_ino)` vs Windows `GetFileInformationByHandleEx(FileIdInfo)` `(volume_serial, file_index)` with documented file-index-aliasing fallback | prefer `Handle` equality over raw `st_dev` for quarantine-volume checks [11 §4] |
-| `filetime` | 0.2.29 [11] | MIT/Apache-2.0 [11] | set/preserve mtime across move/restore | per-OS `src/unix/macos.rs` getattrlist fast path + utimensat fallback [11 §7] |
+| ⊘ `same-file` | 1.0.6 [04][09][10][11] | Unlicense/MIT [09][10][11] | **NOT ADOPTED (research record)** — same-volume/hardlink identity (Unix `st_dev`/`st_ino`, Windows file-id); the shipped check is a raw `st_dev` compare | research record only [11 §4] |
+| ⊘ `filetime` | 0.2.29 [11] | MIT/Apache-2.0 [11] | **NOT ADOPTED (research record)** — set/preserve mtime across move/restore; moves and restores are `rename` operations, which carry the inode timestamps with them, so no explicit setter is needed | research record only [11 §7] |
 | `xattr` | 1.6.1 [05][11] | MIT OR Apache-2.0 [05][11] | evidence tags on quarantined files — **unix only** | Windows is compile-ok-but-unsupported (`SUPPORTED_PLATFORM=false`, io::Error at runtime) [11 §7] ⇒ ledger-based metadata, not fs-xattr [11 risks #5] |
 | `trash` | 5.2.6 [05][11] | MIT [05][11] | OS trash per backend: macOS `NSFileManager`/Finder (delete-only), Windows `IFileOperation`, Linux FreeDesktop (`.trashinfo` replay via `os_limited::restore_all`) | crate msrv 1.85 [11]; FreeDesktop cross-topdir fallback = non-atomic copy+delete ⇒ never our restore path [11 §6/risks]; Linux getmntent UB note — pin calls to one thread [11 risks #4] |
-| `dirs` | 6.0.0 [11] | MIT OR Apache-2.0 [11] | per-OS roots: `cache_dir` = `$XDG_CACHE_HOME|$HOME/.cache` / `{FOLDERID_LocalAppData}` / `~/Library/Caches` | `runtime_dir`/`executable_dir` are Linux-only (return `None` elsewhere) — gate by `Option` [11 §7] |
+| `dirs` | 6.0.0 [11] | MIT OR Apache-2.0 [11] | per-OS roots: `cache_dir` = `$XDG_CACHE_HOME` or `$HOME/.cache` / `{FOLDERID_LocalAppData}` / `~/Library/Caches` | `runtime_dir`/`executable_dir` are Linux-only (return `None` elsewhere) — gate by `Option` [11 §7] |
 
 ### 1g. GUI layer (Tauri + Svelte) — ADR-5/18 pivot
 
@@ -1993,11 +2052,11 @@ Versions/licenses verified 2026-08-31 at crates.io / npm registry [12].
 | Crate | Ver (2026-08-31) | License | Purpose / verdict | Feature flags | Notes |
 |---|---|---|---|---|---|
 | `tauri` | 2.11.5 [12] | Apache-2.0 OR MIT [12] | Rust app shell: `#[tauri::command]` (UI→Rust, typed via serde), event system (Rust→UI), `ipc::Channel<T>` (ordered streaming — scan/classify progress); `tauri::State` for a managed `ScanRegistry`; permissioned capabilities in `src-tauri/capabilities/*.json` (deny-by-default) [12] | `tray-icon` for menubar mode [12] | newest stable; all `tauri`-family crates Apache-2.0 OR MIT [12] |
-| `wry` | 0.56.1 [12] | Apache-2.0 OR MIT [12] | system webview host (macOS WKWebView / Windows WebView2 / Linux WebKitGTK) — pulled transitively by `tauri` [12] | — | webview fragmentation risk per-OS [12 risks #1] |
-| `tao` | 0.37.0 [12] | Apache-2.0 [12] | window/event abstraction under Tauri (traffic lights, resize, theme change) [12] | — | pulled transitively by `tauri` [12] |
+| `wry` | 0.55.1 [12] | Apache-2.0 OR MIT [12] | system webview host (macOS WKWebView / Windows WebView2 / Linux WebKitGTK) — pulled transitively by `tauri` via `tauri-runtime-wry` [12] | — | webview fragmentation risk per-OS [12 risks #1] |
+| `tao` | 0.35.3 [12] | Apache-2.0 [12] | window/event abstraction under Tauri (traffic lights, resize, theme change) [12] | — | pulled transitively by `tauri` (lockfile as of 2026-09-12) [12] |
 | `tauri-plugin-dialog` | 2.7.3 [12] | Apache-2.0 OR MIT [12] | native open/save/message dialogs (sheet-style on macOS); used for volume pickers + confirmations, NOT scan I/O [12] | — | scan/apply/purge I/O stays in Rust commands (D-02/D-08) [12] |
 | `tauri-plugin-fs` | 2.5.2 [12] | Apache-2.0 OR MIT [12] | scoped app-config fs for JS only (capability path-scope system); coarse volume-wide writes kept out of the webview [12] | — | decision: all scan/classify/plan/apply/purge I/O via Rust commands — preserves WAL + typed byte-count correctness [12] |
-| `window-vibrancy` | 0.8.0 [12] | Apache-2.0 OR MIT [12] | macOS `apply_vibrancy` (NSVisualEffectMaterial, 10.10+) / macOS 26 `apply_liquid_glass` / Windows 11 Mica + 10 Acrylic; cfg-gated per OS [12] | — | requires `transparent: true` **and** `macOSPrivateApi: true`; private APIs block App Store acceptance (fine for direct-DMG; Linux unsupported — compositor-controlled) [12 risks #3] |
+| `window-vibrancy` | 0.6.0 [12] | Apache-2.0 OR MIT [12] | **TRANSITIVE** — compiled in by `tauri`'s default feature set, not called by our source (`grep -rn 'vibrancy' src-tauri/src` → nothing) and the App Store tradeoff below is the reason it stays unused [12] | — | if ever adopted: needs `transparent: true` **and** `macOSPrivateApi: true` (conf sets only `transparent`); private APIs block App Store acceptance (fine for direct-DMG; Linux unsupported — compositor-controlled) [12 risks #3] |
 
 Frontend (npm, owning module `ui/`) — versions/licenses per note [12]:
 
@@ -2011,7 +2070,8 @@ Frontend (npm, owning module `ui/`) — versions/licenses per note [12]:
 
 > Supersedes the shelved TUI stack (§1c) per ADR-5/18 (D-09/D-10/D-11). ratatui/crossterm/
 > unicode-width/signal-hook rows above are retained for history + ADR traceability, struck as
-> shelved; `indicatif` stays (headless CLI subset, D-08). Rust core is unchanged (R1): the GUI
+> shelved; `indicatif` was never declared either — the headless CLI prints plain lines, so that
+> row is a research record too (2026-09-12 audit). Rust core is unchanged (R1): the GUI
 > layer is a pure presentation host over the same scan/classify/plan/execute/ledger/policy core.
 
 ## 2. Pitfalls table
@@ -2028,12 +2088,12 @@ Frontend (npm, owning module `ui/`) — versions/licenses per note [12]:
 | crossterm major-version mixing | never let two crossterm major versions into one tree — separate event queues (races, lost events), raw mode tracked separately (may not restore on exit); pin 0.29 next to ratatui 0.30 and check transitive deps | [06] |
 | two SSE layers | reqwest-eventsource and eventsource-stream are alternatives — choose one, do not stack both; if using async-openai you never touch SSE crates directly | [07] |
 | tempfile gives atomicity, not durability | docs caveat: persist/persist_noclobber do NOT fsync file contents or the containing directory — sync(temp) + sync(parent dir) yourself (F_FULLFSYNC on Apple is std `sync_all()` since PR #60121) | [08] |
-| crates.io API notes | versions/licenses above were pulled per-crate from the crates.io API on 2026-08-30 [04][07][08]; sysinfo 0.3x and indicatif 0.1x churn between minor versions — pin tightly; dua-core 3.3.0 published 2026-08-28 (check for newer before pinning); libc 1.0.0-alpha.4 exists but the stable line is 0.2.x — stay on 0.2; sled 1.0.0-alpha.124 stalled since 2024-10 | [04][07][08] |
-| fs2 vs fs4 | fs4 is the maintained rustix-based fork (sync feature MSRV 1.75); fs2 0.4.3 is the older original — prefer fs4; both advisory-only locks | [08] |
-| libc missing macOS symbols | `setiopolicy_np` NOT exported by libc (own `extern "C"` block, plain linking vs libSystem suffices); nix `FileFlag` lacks `SF_DATALESS`/`UF_DATAVAULT`/`SF_FIRMLINK`; nix has NO `renamex_np` (`RenameFlags` is Linux-only) — raw libc it is | [04][05] |
-| rustix license triple | rustix is Apache-2.0 OR MIT OR Apache-2.0-WITH-LLVM-exception — unusual triple; fine for use, attribute correctly if vendoring | [05] |
-| num_cpus vs std | `std::thread::available_parallelism` covers most needs; num_cpus only if you mirror dua's exact `threads` plumbing | [04] |
-| signal-hook transitive version | we list signal-hook 0.4.4 while crossterm 0.29 pulls signal-hook 0.3.17 transitively — two minor lines in one tree. Harmless (they don't share types across our boundary; we use only signal-hook's own flag/mio surface), but check `cargo tree -d` at pin time and prefer routing through crossterm's own SIGWINCH handling where possible | [06] |
+| crates.io API notes | versions/licenses above were pulled per-crate from the crates.io API on 2026-08-30 [04][07][08]; sysinfo 0.3x churns between minor versions — pin tightly; dua-core was 3.3.0 at that date (2026-08-28) and is now pinned `=4.0.0` (D-37); libc 1.0.0-alpha.4 exists but the stable line is 0.2.x — stay on 0.2; sled 1.0.0-alpha.124 stalled since 2024-10 | [04][07][08] |
+| advisory locks | research surveyed `fs4` (maintained rustix-based fork of `fs2`, sync feature MSRV 1.75) vs `fs2` 0.4.3 (older original) — both advisory-only. **Outcome 2026-09-12: neither was adopted**; the shipped lock is std `File::try_lock` | [08] |
+| libc missing macOS symbols | `setiopolicy_np` NOT exported by libc (own `extern "C"` block, plain linking vs libSystem suffices); at survey time `nix::FileFlag` lacked `SF_DATALESS`/`UF_DATAVAULT`/`SF_FIRMLINK` and `nix` had no `renamex_np` (`RenameFlags` is Linux-only) — this is why the macOS syscall layer is raw `libc`, and `nix` is no longer a dependency at all | [04][05] |
+| rustix license triple | rustix is Apache-2.0 OR MIT OR Apache-2.0-WITH-LLVM-exception — unusual triple; fine for use, attribute correctly if vendoring. **Not adopted** (raw `libc`), recorded for any future revisit | [05] |
+| num_cpus vs std | `std::thread::available_parallelism` covers most needs; num_cpus only if you mirror dua's exact `threads` plumbing — neither is a dependency (dua-core takes the count as an argument) | [04] |
+| signal-hook transitive version | **Moot — the TUI stack is shelved and `signal-hook` is not declared.** If revived: crossterm 0.29 pulls signal-hook 0.3.17 transitively while the proposal listed 0.4.4; check `cargo tree -d` at pin time and prefer routing through crossterm's own SIGWINCH handling | [06] |
 | Windows rename semantics | No-clobber = *omit* `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` — `FILE_RENAME_FLAG_NO_REPLACE` does not exist; [MS-FSCC] documents no min OS version for `FileRenameInfoEx` (headers appear in Win10 1607; POSIX_SEMANTICS usable per Win10 1709, rust-lang#123985) ⇒ runtime probe + `MoveFileExW` fallback, never compile-time assumption; whether POSIX rename covers directory targets is undocumented; SMB shares have no POSIX rename semantics — treat as external volumes | [09 §delta/risks][11 §1/risks] |
 | NTFS hardlink/junction specifics | `CreateHardLink` can't reference directories or cross volumes; junctions (mount-point reparse points) may cross local volumes — walker must never descend them; NTFS has no per-file CoW ⇒ freed-byte estimates rely on hardlinks only (no APFS-clone analog); supersede-disposition opens fail while an ADS is open | [09 §0][11 §4] |
 | Linux renameat2 support matrix | RENAME_NOREPLACE is kernel/FS-gated (ext4 ≥3.15; btrfs/tmpfs/cifs ≥3.17; xfs ≥4.0; many more ≥4.9); NFS rejects ANY rename flags (`-EINVAL`) and its failure does not guarantee the file was not renamed — probe fstype per volume, fall back or refuse; glibc wrapper only ≥2.28 | [10 §0][11 §1] |
@@ -2042,100 +2102,81 @@ Frontend (npm, owning module `ui/`) — versions/licenses per note [12]:
 | long paths on Windows | classic MAX_PATH 260; long paths opt-in since Win10 1607, `\\?\` prefix for 32,767 wchar — manifest paths must carry `\\?\` form past 260 and rename targets validated | [09 §0] |
 | jwalk is NOT macOS-only | its cross-platform reputation is stale in the other direction: jwalk 0.9.0 (2026-08-05) is fully portable (std::fs under the hood) — but remains REJECTED here as unmaintained per [04]; dua-core's per-OS native walkers (macOS getattrlistbulk, Windows FileIdBothDirInfo) are the fast-path design to copy | [09 §crates][11 §5] |
 
-## 3. Proposed [dependencies] block
+## 3. Dependency block — as landed 2026-09-12
+
+The block below is the **live `Cargo.toml`** (source of truth). The 2026-08 proposal it replaced
+declared 12 crates no source file ever referenced; those were dropped 2026-09-12 and are recorded
+as research rows in §1 (marked **⊘ ... NOT ADOPTED**) and in the §2.4 dropped list:
+`ignore`, `walkdir`, `rayon`, `nix`, `rustix`, `fs4`, `same-file`, `cargo_metadata`, `secrecy`,
+`reqwest` (now transitive via async-openai), `tiktoken-rs`, `backon`. Also never declared:
+`tower`, `fs2`, `jwalk`, `dashmap`, `num_cpus`, `regex`, `unicode-segmentation`, and the shelved
+`tui` stack.
 
 ```toml
 [dependencies]
-# --- core (default feature: headless scan/classify/plan/execute/ledger) ---
-dua-core = "=3.3.0"                      # [04] pin exact: 10-day-old standalone crate
-ignore = "0.4.33"                        # [04] gitignore builder + fallback walker
-globset = "0.4.20"                       # [04] policy/ignore glob matching
-walkdir = "2.5.0"                        # [04] serial fallback traversal
-crossbeam-channel = "0.5.16"             # [04][06] scan->ui events + select! loop
-num_cpus = "1.17.0"                      # [04] worker counts (or std available_parallelism)
-sysinfo = "0.39.6"                       # [04] volume list/capacity/removable flags
-rayon = "1.12.0"                         # [04] CPU-bound classify parallel map ONLY
-dashmap = { version = "6.2.1", optional = true }  # [04] only if classifier threads share maps
-libc = "0.2.189"                         # [04][05][08] FFI: renamex_np, clonefile, F_FULLFSYNC...
-nix = { version = "0.31.3", features = ["fs"] }   # [05][08] fcntl/fstatat/flock typed APIs
-rustix = { version = "1.1.4", features = ["fs"] } # [05] xattr module
-tempfile = "3.27.0"                      # [08] atomic persist for WAL compaction
-crc32fast = "1.5.1"                      # [08] ledger/WAL per-record CRC
-fs4 = "1.1.0"                            # [08] advisory flock (sync feature MSRV 1.75)
-fs-err = "3.3.1"                         # [04][08] io error context on ledger/config IO
+# --- core (headless scan/classify/plan/execute/ledger) ---
+dua-core = "=4.0.0"                       # [04] bumped 3.3.0→4.0.0 per owner D-37 (2026-09-10)
+globset = "0.4.20"                        # [04] policy glob matching (deny-globs)
+crossbeam-channel = "0.5.16"              # [04][06] scan->classify->exec events
+sysinfo = "0.39.6"                         # [04] volume list/capacity/removable flags
+libc = "0.2.189"                           # [04][05][08] FFI: renamex_np, clonefile, F_FULLFSYNC...
+tempfile = "3.27.0"                        # [08] atomic persist for WAL compaction
+crc32fast = "1.5.1"                        # [08] ledger/WAL per-record CRC
+fs-err = "3.3.1"                           # [04][08] io error context on ledger/config IO
 serde = { version = "1.0.229", features = ["derive"] } # [08]
-serde_json = "1.0.151"                   # [08] JSONL ledger + CRC canonical bytes
-toml = "0.9"                             # config parsing; 0.9 line current, 1.1.4 exists (spec-embedded, new) — stay on 0.9 for MSRV safety [verified 2026-08-31]
-thiserror = "2.0.20"                     # typed module errors [verified 2026-08-31]
-anyhow = "1.0.104"                       # CLI/plan boundary errors [verified 2026-08-31]
-clap = { version = "4.6.6", features = ["derive"] }   # subcommands [verified 2026-08-31]
-chrono = { version = "0.4.45", features = ["serde"] } # RFC3339 ts [verified 2026-08-31]
-uuid = { version = "1.26.0", features = ["v4"] }      # WAL op ids [verified 2026-08-31]
-
-# --- TUI (feature "tui") — SHELVED 2026-08-31 (GUI pivot, ADR-5/18): kept for reference; indicatif stays active for headless CLI ---
-ratatui = { version = "0.30.2", optional = true } # [06] shelved
-crossterm = { version = "0.29", optional = true } # [06] shelved (was ratatui hard dep)
-unicode-width = { version = "0.2.2", optional = true } # [06] shelved
-signal-hook = { version = "0.4.4", optional = true }   # [06] shelved
-indicatif = { version = "0.18.6", optional = true }    # [04][06] ACTIVE — headless CLI progress ONLY (ADR-14)
-# --- GUI (Tauri 2.11.5) lives in src-tauri/Cargo.toml, not this core workspace — see §1g (ADR-5/18) ---
+serde_json = "1.0.151"                     # [08] JSONL ledger + CRC canonical bytes
+toml = "0.9"                              # config parsing [verified 2026-08-31]
+thiserror = "2.0.20"                       # typed module errors
+anyhow = "1.0.104"                         # CLI/plan boundary errors
+clap = { version = "4.6.6", features = ["derive"] }   # subcommands (ADR-14 thin CLI)
+chrono = { version = "0.4.45", features = ["serde"] } # RFC3339 ts
+uuid = { version = "1.26.0", features = ["v4"] }      # WAL op ids
+dirs = "6.0.0"                             # [SPEC Part B §3.9] XDG/home dir resolution
 
 # --- LLM agent loop (feature "llm") ---
-tokio = { version = "1.53.1", optional = true, features = ["rt-multi-thread", "macros", "sync"] } # [07]
-reqwest = { version = "0.13.4", optional = true, default-features = true, features = ["json"] }   # [07] rustls default
-async-openai = { version = "0.41.3", optional = true, features = ["chat-completion", "middleware"] } # [07]
-reqwest-eventsource = { version = "0.6.0", optional = true }  # [07] only if hand-rolling SSE (pick ONE)
-eventsource-stream = { version = "0.2.3", optional = true }   # [07] alt to reqwest-eventsource (pick ONE)
-tiktoken-rs = { version = "0.12.0", optional = true } # [07] preflight estimates, never billing
-backon = { version = "1.6.0", optional = true }       # [07] tool-call retry
-cargo_metadata = "0.23.1"                # [SPEC Part B §3.2] resolve toolchain/target layout for classify evidence
-regex = "1.13.1"                         # [SPEC Part B §3.6] policy compiler token patterns
-dirs = "6.0.0"                           # [SPEC Part B §3.9] XDG/home dir resolution for config + caches
-secrecy = "0.10"                         # [SPEC Part B §3.9] API-key type (no accidental Debug/Display leaks)
-same-file = "1.0.6"                      # [SPEC Part B §2.4] st_dev/mntonname dev-identity checks
-unicode-segmentation = "1.13.3"          # [06] grapheme-safe truncation for CJK/emoji filenames
+# HTTP transport is async-openai's own (it depends on reqwest directly); we never name
+# `reqwest` in source, so it stays a transitive dep only.
+tokio = { version = "1.53.1", optional = true, features = ["rt-multi-thread", "macros", "sync"] }
+async-openai = { version = "0.41.3", optional = true, features = ["chat-completion"] }
 
 # --- platform-gated (notes 09-11) — see §1f for the full version/license table ---
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] } # [09][11] FileRenameInfoEx, FlushFileBuffers, FileIdBothDirInfo
-windows-sys = "0.61.2"                   # [09] raw-binding alternative (pick ONE of the two)
-winreg = "0.56.0"                        # [09] VolumeCaches + Lxss BasePath enumeration
-filetime = "0.2.29"                      # [11] mtime preservation across move/restore (all targets)
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# rustix/libc/nix already in core deps; on Linux they gain renameat2/syncfs/statx duty [10][11]
-filetime = "0.2.29"                      # [11] utimensat path
-
 [target.'cfg(unix)'.dependencies]
-xattr = "1.6.1"                          # [05][11] evidence tags (unix only; Windows unsupported)
+xattr = "1.6.1"                            # [05][11] evidence tags (unix only; Windows unsupported)
 ```
 
-Notes: `dashmap` stays optional until classifier threads provably need shared maps [04];
-`reqwest-eventsource` vs `eventsource-stream` — enable exactly one [07]; keep SSE crates disabled
-while async-openai parses streams itself [07]. Platform-gated blocks follow §1f: `windows`/
-`windows-sys`/`winreg` must stay inside `[target.'cfg(windows)']` (their Win32 modules do not
-compile elsewhere) [09 §crates]; pick `windows` OR `windows-sys`, never both [09];
-`filetime`/`xattr`/`same-file`/`dirs` are listed once per gate only where their surface differs.
+Notes [04][08]: `dua-core` is pinned exactly (young crate — re-check before pinning). The TUI stack
+(`ratatui`/`crossterm`/`unicode-width`/`signal-hook`) is **shelved**, not declared (GUI pivot,
+ADR-5/18); `indicatif` is likewise not declared — headless CLI progress currently uses plain
+stderr. Platform-gated blocks follow §1f: `windows`/`windows-sys`/`winreg` must stay inside
+`[target.'cfg(windows)']` (their Win32 modules do not compile elsewhere) [09 §crates]; pick
+`windows` OR `windows-sys`, never both [09]; `xattr` is listed once per gate only where its
+surface differs. Windows/Linux target blocks are **not yet declared** — the core is
+macOS-first (course scope); see §1f for the planned per-OS deps.
+
+Notes on gating: `windows`/`windows-sys`/`winreg` must stay inside `[target.'cfg(windows)']`
+(their Win32 modules do not compile elsewhere) [09 §crates]; pick `windows` OR `windows-sys`,
+never both [09]; `xattr` is listed once per gate only where its surface differs. SSE crates
+(`reqwest-eventsource`/`eventsource-stream`) are **not declared** — async-openai parses streams
+itself, so if SSE is ever hand-rolled, enable exactly one [07].
 
 ## 4. Feature-gating strategy
 
 ```toml
 [features]
-default = []            # headless core: scan/classify/plan/execute/ledger/policy/config
-tui = ["dep:ratatui", "dep:crossterm", "dep:unicode-width", "dep:signal-hook", "dep:indicatif"]
-llm = ["dep:tokio", "dep:reqwest", "dep:async-openai", "dep:tiktoken-rs", "dep:backon"]
+llm = ["dep:tokio", "dep:async-openai"]   # implicit default = headless core (no features)
 ```
 
-- **default = headless core.** scan → dua-core walk + crossbeam events; classify → rayon CPU pool;
-  plan/execute → nix/libc quarantine moves; ledger → JSONL + crc32fast + fs4 flock + tempfile
-  compaction; policy/config → globset + toml + clap. Zero async runtime, zero terminal control.
-  CLI progress without TUI comes via `indicatif` (kept in the `tui` feature so the pure-headless
-  build stays lean; move to `default` if headless builds still need progress bars).
-- **`tui` feature**: ratatui 0.30.2 + crossterm 0.29 pinned together [06]; unicode-width for CJK
-  filenames [06]; signal-hook for external SIGINT/SIGTERM routing [06]; NO tokio in this path [06].
-- **`llm` feature**: the only place tokio lives [06][07]; reqwest (rustls default) + async-openai
-  with only `chat-completion` + `middleware` features to keep the binary lean [07]; tiktoken-rs for
-  preflight token estimates (never billing) [07]; backon for tool-call retry [07]. SSE crates
+The `tui` feature and its four `dep:` entries were **removed** with the GUI pivot (ADR-5/18) —
+the shelved crates were never declared, so the feature list is now exactly the one above.
+
+- **default = headless core.** scan → dua-core walk + crossbeam events; classify → single-threaded
+  evidence loop (no rayon); plan/execute → raw `libc` quarantine moves; ledger → JSONL + crc32fast
+  + std `File::try_lock` + tempfile compaction; policy/config → globset + toml + clap. Zero async
+  runtime, zero terminal control.
+- **`llm` feature**: the only place tokio lives [06][07]; async-openai with only `chat-completion`
+  to keep the binary lean (it brings reqwest transitively, rustls default) [07]; no tokenizer crate —
+  context-fit preflight uses the chars/4 estimate in `src/cost.rs` [07]; no retry crate —
+  async-openai's built-in retry layer handles 429/5xx + `Retry-After` [07]. SSE crates
   (reqwest-eventsource OR eventsource-stream) stay OUT of the feature until hand-rolling is chosen
   — async-openai already parses streams [07].
 - Both features compose: `tui` + `llm` = the interactive agent UI; the privacy chokepoint (tool
@@ -2147,15 +2188,12 @@ llm = ["dep:tokio", "dep:reqwest", "dep:async-openai", "dep:tiktoken-rs", "dep:b
 
 | Dependency | Risk | Mitigation |
 |---|---|---|
-| dua-core 3.3.0 | 10-day-old standalone crate (2026-08-28, ~10k downloads) — most likely to churn before 2026-09-08 | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; 91 tests green incl. walker/syscall suites. Fallback = ignore::WalkParallel unchanged. Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
-| ratatui 0.30.2 / crossterm 0.29 | crossterm 0.30 does not exist yet as a known target; when a new major lands, ratatui moves (non-optional dep) and every direct crossterm use must move in the same commit (separate event queues per major = race/lost-event risk) | Pin `crossterm = "0.29"` next to `ratatui = "0.30"`; check transitive deps in CI [06] |
-| reqwest 0.13.x | 0.13.0 broke with rustls-default (crypto provider aws-lc-rs); `query`/`form` became opt-in; `json` default-on "verify at build time" | Pin `0.13.4`; enable `json` explicitly; test base-URL overrides (DeepSeek/OpenRouter/Ollama/vLLM) at build time [07] |
-| async-openai 0.41.3 | fine-grained feature churn (`chat-completion`, `middleware`, `byot`); 0.41.3 released 2026-07-31 | Pin exact; compile only chat-completions [07] |
+| dua-core 3.3.0→4.0.0 | 10-day-old standalone crate at first audit (3.3.0, 2026-08-28, ~10k downloads) — most likely to churn | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; **112 tests green by default / 122 with `--features llm`** (counts re-verified 2026-09-12), incl. walker/syscall suites. Fallback = `ignore::WalkParallel` unchanged (pre-planned, not vendored). Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
+| ratatui 0.30.2 / crossterm 0.29 | **shelved with the GUI pivot (ADR-5/18) — not declared.** Kept as a risk note in case the TUI returns: crossterm 0.30 does not exist yet; when a new major lands, ratatui moves and every direct crossterm use must move in the same commit (separate event queues per major = race/lost-event risk) | If revived, pin `crossterm = "0.29"` next to `ratatui = "0.30"`; check transitive deps in CI [06] |
+| reqwest 0.13.x (**transitive**) | 0.13.0 broke with rustls-default (crypto provider aws-lc-rs); `query`/`form` became opt-in; `json` default-on "verify at build time". Not a direct dep — we inherit async-openai's pin | Pin only via `Cargo.lock`; test base-URL overrides (DeepSeek/OpenRouter/Ollama/vLLM) at build time [07] |
+| async-openai 0.41.3 | fine-grained feature churn (`chat-completion`, `middleware`, `byot`); 0.41.3 released 2026-07-31 | Pin exact; compile only `chat-completion` [07] |
 | sysinfo 0.39.6 | 0.3x "churns between minor versions" | Pin exact; `DiskRefreshKind` to trim cost [04] |
-| indicatif 0.18.6 | 0.1x minor-version churn | Pin exact [04] |
 | libc 0.2.x | 1.0.0-alpha.4 pre-releases exist; stable line is 0.2.x | Stay on `0.2.x` (0.2.189); do NOT adopt 1.0-alpha [04][05][08] |
 | tokio 1.53.1 | minor-version drift normal | `1.53.1` with minimal features [07] |
-| fs4 1.1.0 | fork-of-fs2 lineage; sync feature MSRV 1.75 | Pin 1.1.0; verify MSRV fits toolchain [08] |
-| nix 0.31.3 | 0.x line; API surface (fcntl enums, Flock) stable-ish but 0.x | Pin 0.31.3 [05][08] |
 | tempfile 3.27.0 | persist semantics changed at 3.18.0 (renameat_with on Apple) | Pin ≥3.27.0; re-verify docs caveat (no fsync) on upgrade [08] |
-| General pinning advice | Any crate could publish tomorrow | For young/churning crates (dua-core, sysinfo, indicatif, reqwest, async-openai) pin EXACT versions in Cargo.toml and let only deliberate upgrades move them; for ultra-stable lines (serde 1.x, libc 0.2.x, crossbeam-channel 0.5.x, globset 0.4.x, walkdir 2.x) caret ranges are acceptable [04][07][08]. Commit Cargo.lock; re-verify pinned versions against crates.io API the day Cargo.toml lands (all claims here verified 2026-08-30 [04]–[08], 2026-08-31 [09]–[13] + §3 INFERENCE batch) |
+| General pinning advice | Any crate could publish tomorrow | For young/churning crates (dua-core, sysinfo, async-openai) pin EXACT versions in Cargo.toml and let only deliberate upgrades move them; for ultra-stable lines (serde 1.x, libc 0.2.x, crossbeam-channel 0.5.x, globset 0.4.x) caret ranges are acceptable [04][07][08]. Commit Cargo.lock; re-verify pinned versions against crates.io API the day Cargo.toml lands (all claims here verified 2026-08-30 [04]–[08], 2026-08-31 [09]–[13] + §3 INFERENCE batch; **Cargo.toml re-audited 2026-09-12 — 12 dead deps dropped**) |

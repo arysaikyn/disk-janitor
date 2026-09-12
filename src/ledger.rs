@@ -456,8 +456,9 @@ pub fn open(home: &Path) -> anyhow::Result<Store> {
         .with_context(|| format!("create ledger home {}", home.display()))?;
 
     // 2. Single-writer flock (advisory; every janitor process must cooperate — 08 §6).
-    // std's `File::try_lock` (stabilized 1.89, flock(2) LOCK_EX|LOCK_NB on unix) fills the
-    // fs4 role; the sidecar handle stays alive for the Store lifetime so the lock holds.
+    // std's `File::try_lock` (stabilized 1.89, flock(2) LOCK_EX|LOCK_NB on unix) is the
+    // lock primitive — the `fs4`/`nix::fcntl::Flock` candidates were never adopted; the
+    // sidecar handle stays alive for the Store lifetime so the lock holds.
     let lock_path = home.join("janitor.lock");
     let lock = std::fs::OpenOptions::new()
         .read(true)

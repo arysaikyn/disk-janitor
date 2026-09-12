@@ -8,12 +8,12 @@
 
 ## Index
 
-- ADR-1 Walker: dua-core 3.3.0 (jwalk unmaintained; ignore kept for patterns + fallback)
+- ADR-1 Walker: dua-core (pinned `=4.0.0` since D-37, 2026-09-10) — the only walker in the tree; jwalk rejected as unmaintained; `globset` covers deny-glob patterns (the `ignore` crate is a research record only)
 - ADR-2 Quarantine primitive: same-volume `renamex_np(RENAME_EXCL)` into per-volume hidden roots
 - ADR-3 fsync strategy: `F_FULLFSYNC` via std, dir-sync boundaries, sync per state transition
 - ADR-4 Ledger/WAL format: framed JSONL + crc32 chain + flock, skip-and-continue recovery
-- ADR-5 TUI stack: ratatui 0.30.2 + crossterm 0.29 pinned; threads + crossbeam; indicatif CLI-only
-- ADR-6 Agent-loop HTTP stack: async-openai 0.41.3, sans-IO loop, reqwest rustls
+- ADR-5 TUI stack: ratatui 0.30.2 + crossterm 0.29 + indicatif — **shelved with the GUI pivot (ADR-18); never declared as dependencies**
+- ADR-6 Agent-loop HTTP stack: async-openai 0.41.3, sans-IO loop, reqwest rustls (reqwest is **transitive only** — we never name it in source)
 - ADR-7 Privacy architecture: opaque IDs + serializer chokepoint + CI leak test
 - ADR-8 Classification evidence model: evidence chains, 5 grades, CAS GC-only, orphan-first
 - ADR-9 Token/cost accounting: per-call provider-reported usage, budget interrupt
@@ -27,7 +27,7 @@
 - ADR-17 Data format versioning — ledger/WAL/manifest v1 frozen through the course; forward-compat replay (unknown skipped + counted, deny_unknown_fields OFF)
 - ADR-18 GUI paradigm — Tauri + Svelte desktop App (GUI-first per D-10; Rust core unchanged; UX-SPEC.md governs UI; ADR-5 TUI shelved)
 
-## ADR-1: Walker — dua-core 3.3.0 over jwalk and ignore
+## ADR-1: Walker — dua-core over jwalk and ignore
 
 **Status:** amended 2026-08-30 — Arys upheld the macOS dua-core fast path and confirmed the 3-platform amendment (ignore::WalkParallel baseline elsewhere, Walker trait seam).
 
@@ -46,15 +46,19 @@ when dropped [04].
 
 **Decision.**
 
-- dua-core 3.3.0 pinned exact (`=3.3.0`) as the primary walker in `scan/`:
+- dua-core pinned exact — `=3.3.0` at decision time, **`=4.0.0` since D-37 (2026-09-10)** — as the
+  primary and only walker in `scan/`:
   `walk_roots(roots, threads, Order::ParentFirst, opts, descend)` [04][SPEC §4].
 - Mount skipping is a per-entry `MetadataExt::dev()` compare inside the `descend` predicate —
   not mount-table parsing; firmlink-safe because firmlinked `/`, `/Users`, and
   `/System/Volumes/Data/...` share `st_dev` [04 §dua][05 §1].
-- ignore 0.4.33 is kept only for `gitignore::GitignoreBuilder` exclusion patterns (classifier
-  and policy globs), globset for user ignore globs, walkdir 2.5.0 as the serial fallback [04].
-- Pre-planned fallback if dua-core churns before M1: `ignore::WalkParallel` + own channel +
-  `std::thread::available_parallelism()`, with an explicit drain/flush cancel path [04].
+- `globset` 0.4.20 does the actual policy deny-glob matching. `ignore` 0.4.33 (and `walkdir`
+  2.5.0) are **research records only — never dependencies** (2026-09-12 audit); the survey
+  proposals to use them for `gitignore::GitignoreBuilder` and as a serial fallback were never
+  implemented [04].
+- Pre-planned fallback if dua-core churns: `ignore::WalkParallel` + own channel +
+  `std::thread::available_parallelism()`, with an explicit drain/flush cancel path — **not
+  currently vendored**; adding it would reintroduce the `ignore` dependency [04].
 
 **Consequences.**
 
@@ -68,16 +72,22 @@ when dropped [04].
 
 **Amended 2026-08-30 (3-platform):** dua-core remains the **macOS** fast path only — its
 `getattrlistbulk` enumeration and APFS accounting are exactly as decided above. The portable
-baseline on every OS is `ignore` 0.4.33 `WalkParallel` (the only walker fully portable today)
-with per-OS metadata fast paths feeding the same `DirStat` type: Linux `statx` via rustix
-(`StatxFlags::BTIME` birth time; `st_dev`/`st_nlink`/`st_blocks` via portable Unix
-`MetadataExt`) plus per-candidate mount resolution from `/proc/self/mountinfo`; Windows
+baseline on every OS is *planned* as `ignore` 0.4.33 `WalkParallel` (the only walker fully
+portable today) with per-OS metadata fast paths feeding the same `DirStat` type: Linux `statx`
+via raw `libc` FFI (`libc::statx`, `STATX_BTIME` for birth time; `st_dev`/`st_nlink`/`st_blocks`
+via portable Unix `MetadataExt`) — **`rustix` is a research record, not a dependency**
+(2026-09-12 audit); plus per-candidate mount resolution from `/proc/self/mountinfo`; Windows
 `GetFileInformationByHandleEx(FileIdBothDirInfo)` bulk enumeration copied from dua-core's
 windows module (measured "30× and more performance" since dua-cli 2.41), never descending
 reparse points/junctions. The `Walker` trait is the seam — macOS = dua-core, baseline =
 `ignore::WalkParallel`, fast paths behind the identical `DirStat` output contract [11 §4/§5/§7]
-[09 §delta]. The pre-planned ignore fallback of the original decision becomes the baseline
-engine everywhere except macOS.
+[09 §delta].
+
+> **Status 2026-09-12 (audit):** the 3-platform paragraph above is the **design plan, not the
+> shipped tree**. `ignore::WalkParallel` is not a dependency and no portable walker baseline
+> exists in source; `scan/` is macOS-only behind the `Walker` seam. Adding the baseline means
+> declaring `ignore` for the first time. Windows/Linux remain compile-checked, not
+> behavior-tested, exactly as SPEC §8 records.
 
 ## ADR-2: Quarantine primitive — same-volume `renamex_np(RENAME_EXCL)` moves
 
@@ -110,9 +120,10 @@ undocumented Put-Back metadata [02 risks #5][05 §7].
 - Capability probe `VOL_CAP_INT_RENAME_EXCL` per volume is advisory only — trust errno
   (`EINVAL`/`ENOTSUP`) at call time, because the empirical `RENAME_SWAP` bit is clear while
   the call succeeds [05 §1].
-- Raw `libc` decls: nix 0.31.3 has no `renamex_np` (`RenameFlags` is Linux-only); constants
-  missing from libc/nix (`RENAME_NOFOLLOW_ANY=0x10`, `SF_DATALESS`, `UF_DATAVAULT`, …) are
-  defined locally [05 §reusable].
+- Raw `libc` decls: `nix` was surveyed as a candidate and rejected — it has no `renamex_np`
+  (`RenameFlags` is Linux-only) and is not a dependency; constants missing from the `libc`
+  crate (`RENAME_NOFOLLOW_ANY=0x10`, `SF_DATALESS`, `UF_DATAVAULT`, …) are defined locally
+  [05 §reusable].
 
 **Consequences.**
 
@@ -128,8 +139,9 @@ undocumented Put-Back metadata [02 risks #5][05 §7].
 the semantics gold standard [11 §1]:
 
 - **Linux** — `renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_NOREPLACE)`: kernel ≥ 3.15,
-  glibc wrapper ≥ 2.28 (libc 0.2.189 ships the constants; rustix `fs::renameat_with` as
-  fallback); `EEXIST` on target feeds the same `-<n>` retry loop. Filesystem support is a
+  glibc wrapper ≥ 2.28 (libc 0.2.189 ships the constants; the `rustix::fs::renameat_with`
+  candidate was surveyed but not adopted — raw `libc` covers it); `EEXIST` on target feeds the
+  same `-<n>` retry loop. Filesystem support is a
   matrix (ext4 ≥ 3.15, btrfs/tmpfs ≥ 3.17, xfs ≥ 4.0, many more ≥ 4.9), probed per volume via
   `/proc/self/mountinfo` fstype — **NFS rejects any flags with `EINVAL`** in `nfs_rename()` and
   the man page warns the file may still have been renamed; on unsupported/NFS fs the fallback
@@ -215,9 +227,10 @@ volume as the quarantine it describes [08 risks #3].
 - Record kinds: `scan_result`, `verdict`, `plan`, `apply`, `purge`, `restore`, `budget`
   (R5/R6) — every record self-contained for replay; the only cross-record reference is
   `undo_of` (a `seq`), so one corrupted line cannot poison later independent ops [08 §8].
-- Single writer guarded by `flock(LOCK_EX | LOCK_NB)` on `~/.disk-janitor/janitor.lock` via
-  fs4 (maintained rustix-based fork; nix `Flock` RAII as alternative) — second instance fails
-  fast with a clear message [08 §6].
+- Single writer guarded by an exclusive non-blocking lock (`flock(2) LOCK_EX | LOCK_NB` on unix)
+  on `~/.disk-janitor/janitor.lock` via **std `File::try_lock`** (stabilized Rust 1.89) — the
+  `fs4` and `nix::fcntl::Flock` candidates were surveyed and **not adopted** (2026-09-12 audit);
+  see `src/ledger.rs::open`. A second instance fails fast with a clear message [08 §6].
 - Recovery: replay ledger (skip-and-continue, recording skipped offsets + seq gaps — an
   operations ledger, unlike SQLite's stop-at-first-invalid-frame); replay WAL tail — a record
   is committed iff its CRC validates; torn tail truncated to the last complete line and parked
@@ -295,7 +308,14 @@ indicatif 0.18.6 stays CLI-only in the thin subset (ADR-14); window-vibrancy 0.8
 the Apple-native material feel the owner demanded (D-10, D-11). The full pivot rationale
 lives in ADR-18.
 
-## ADR-6: Agent-loop HTTP stack — async-openai 0.41.3, sans-IO loop, reqwest rustls
+> **Status 2026-09-12 (audit):** every crate in this ADR's decision block — `ratatui`,
+> `crossterm`, `unicode-width`, `unicode-segmentation`, `signal-hook`, `indicatif` — is a
+> **research record, not a dependency**. None is declared in `Cargo.toml`, and no source file
+> names them; the CLI reports progress through plain `eprintln`/stdout, and the GUI uses
+> `tauri::ipc::Channel`. Kept as the record of the shelved TUI path and as the pinning rule if
+> it is ever revived.
+
+## ADR-6: Agent-loop HTTP stack — async-openai 0.41.3 (rustls TLS via its own reqwest), sans-IO loop
 
 **Status:** upheld — Arys, 2026-08-30 (provider matrix: DeepSeek primary; others best-effort).
 
@@ -319,10 +339,12 @@ pattern gives the model an explicit terminal action [07 §rig].
 
 **Decision.**
 
-- async-openai 0.41.3 with only the `chat-completion` (+ `middleware`) features; tokio
-  `rt-multi-thread` confined to the agent thread — the only async runtime in the binary
-  [07 §rec][06 §5].
-- reqwest stays on its rustls default; `json` enabled explicitly and base-URL overrides
+- async-openai 0.41.3 with only the `chat-completion` feature (`middleware` and `byot` remain
+  uncompiled); tokio `rt-multi-thread` confined to the agent thread — the only async runtime
+  in the binary [07 §rec][06 §5].
+- `reqwest` is **not a direct dependency and is never named in source** — it arrives
+  transitively through async-openai's default features (`default` → `rustls` → `reqwest`),
+  which is also where the rustls/aws-lc-rs TLS provider comes from; base-URL overrides are
   tested at build time (0.13 broke rustls-default; `query`/`form` became opt-in) [07].
 - Loop = sans-IO `AgentRun` state machine (rig-run pattern): `CallModel{turn, history}` /
   `CallTools{calls}` / `Done{reason}` steps; tools call local scan/classify/plan/execute
@@ -344,8 +366,9 @@ pattern gives the model an explicit terminal action [07 §rig].
   testable against a stub OpenAI-compatible HTTP server [07 §rig][DESIGN §7].
 - One HTTP stack serves both the agent and the NL-policy-compiler fallback (`policy/` reuses
   `ChatClient` — no second stack) [DESIGN §3.6].
-- Feature churn risk is pinned away (exact async-openai/reqwest pins; see crate-map §5);
-  `byot` and other features remain uncompiled.
+- Feature churn risk is pinned away (exact `async-openai` pin; `reqwest` pinned only through
+  `Cargo.lock` as a transitive dep; see crate-map §5); `byot` and other features remain
+  uncompiled.
 
 ## ADR-7: Privacy architecture — opaque IDs + serializer chokepoint + CI leak test
 
@@ -472,8 +495,9 @@ directly (`prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`), OpenRouter ev
 empty-`choices` with usage; OpenRouter's final usage chunk deviates (content-free delta
 repeating `finish_reason`); Ollama maps `prompt_eval_count`/`eval_count` and has no
 cached/reasoning breakdown; a stream interrupted mid-flight may lose the final usage chunk
-entirely. DeepSeek prices peak/off-peak separately. tiktoken-rs is accurate only for OpenAI
-models — DeepSeek/Ollama use their own BPE, so local estimates are approximations at best.
+entirely. DeepSeek prices peak/off-peak separately. `tiktoken-rs` is accurate only for OpenAI
+models — DeepSeek/Ollama use their own BPE, so local estimates are approximations at best
+(a field finding; the crate was never adopted — see the Decision block).
 
 **Decision.**
 
@@ -486,10 +510,13 @@ models — DeepSeek/Ollama use their own BPE, so local estimates are approximati
   name [07 §cost][DESIGN §3.9].
 - OpenRouter `usage.cost` (credits) is accepted when present as a cross-check, but our
   computed cost remains the displayed number for uniform accounting [07 §cost].
-- Lost/absent usage falls back to a tiktoken estimate that is clearly marked "unverified" and
-  **never billed** into the running cost [07 risks].
-- tiktoken-rs is used for preflight only: "will this turn fit `config.ctx_len` + how much
-  budget remains before sending", stopping *before* a `context_length_exceeded` 400 [07 §context].
+- Lost/absent usage falls back to a chars/4 estimate (`cost::estimate_unverified`) that is
+  clearly marked "unverified" and **never billed** into the running cost [07 risks]. The
+  `tiktoken-rs` candidate was surveyed and **not adopted** (2026-09-12 audit) — it is accurate
+  only for OpenAI's BPE anyway, never for DeepSeek/Ollama.
+- The same chars/4 estimate is used for preflight ("will this turn fit `config.ctx_len` + how
+  much budget remains before sending"), stopping *before* a `context_length_exceeded` 400
+  [07 §context].
 - Budget interrupt: three independent stop counters checked every turn — model-call budget
   (`max_turns`), Σ `total_tokens`, Σ cost ≥ `config.budget` — each surfacing a distinct
   `StopReason` (`MaxTurns` / `TokenBudget` / `CostBudget`); user Ctrl-C additionally cancels
@@ -594,8 +621,11 @@ has a verified primitive [11 §1–7].
 **Consequences.**
 
 - Crate surface grows: per-OS cfg-gated additions (Windows `windows` 0.62.2 / `winreg` 0.56.0;
-  Linux `rustix` `renameat_with`/`syncfs`/`statx`; portable `same-file`, `dirs`, `filetime`)
-  — none affect the macOS build until M2 [DESIGN §2.4][11].
+  Linux raw `libc` FFI — `renameat2`, `statx`, `syncfs`; portable `dirs`) — none affect the
+  macOS build until M2 [DESIGN §2.4][11]. `rustix`, `same-file`, and `filetime` were surveyed
+  as candidates and are **not dependencies** (2026-09-12 audit); Linux `statx`/`renameat2`
+  were already done through raw `libc` with locally defined constants, so no new crate is
+  needed there.
 - CI becomes a matrix (macOS + Linux at minimum; Windows at M2+) — the demo Mac is unaffected
   either way.
 - Taxonomy triples: [03] macOS is joined by [09] Windows and [10] Linux as per-OS rule tables

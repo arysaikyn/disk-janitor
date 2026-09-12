@@ -96,8 +96,9 @@ pub fn classify_dir(
 /// M1 aggregation pass: fold `scan` batches into per-directory subtree aggregates, probe
 /// ancestry, classify, and assign deterministic ids (SPEC §6: size-desc, path_hash tie).
 /// Order-independent — batch ordering / streaming splits never change the result.
-/// Single-threaded by design; rayon parallelism is an M2 optimization.
-// TODO(M2): parallelize the per-directory classify pass with rayon (`par_bridge`).
+/// Single-threaded by design — classification is I/O-free work over an already-walked
+/// batch, and the `rayon` parallelization candidate was surveyed but **not adopted**
+/// (no `rayon` dependency; the walker's own pool does the parallel part).
 pub fn candidates_from_batch(batches: Vec<DirStat>, th: &Thresholds) -> Vec<Candidate> {
     // 1. Index directories, then fold files into their containing directory's aggregate
     //    (`fold_file` semantics: parent = the dir named by parent.join(name) for kind==Dir).

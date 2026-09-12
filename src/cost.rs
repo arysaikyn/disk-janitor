@@ -132,11 +132,11 @@ pub fn effective_usage(u: &UsageLike) -> (u64, u64, u64) {
     (u.prompt_tokens - cached, cached, u.completion_tokens)
 }
 
-/// tiktoken-style token estimate — chars/4 heuristic. **UNVERIFIED**: approximate for
-/// every tokenizer except OpenAI's (DeepSeek/Ollama use their own BPE, note 07 §context),
-/// so it is display/preflight only and **MUST NOT feed `Kind::Budget` ledger records** —
-/// provider-reported usage is the only billing source (§3.7 lost-usage-chunk fallback:
-/// estimate for display, never billed).
+/// chars/4 token estimate (the `tiktoken-rs` candidate was not adopted). **UNVERIFIED**:
+/// approximate for every tokenizer except OpenAI's (DeepSeek/Ollama use their own BPE,
+/// note 07 §context), so it is display/preflight only and **MUST NOT feed `Kind::Budget`
+/// ledger records** — provider-reported usage is the only billing source (§3.7
+/// lost-usage-chunk fallback: estimate for display, never billed).
 pub fn estimate_unverified(prompt: &str, completion: &str) -> u64 {
     (prompt.chars().count() + completion.chars().count()) as u64 / 4
 }

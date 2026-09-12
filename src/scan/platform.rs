@@ -1,4 +1,4 @@
-//! `scan/platform` — per-OS walker/volume impls (SPEC §3.1/§3.10). macOS = dua-core 3.3.0.
+//! `scan/platform` — per-OS walker/volume impls (SPEC §3.1/§3.10). macOS = dua-core 4.0.0.
 
 use std::sync::Arc;
 
