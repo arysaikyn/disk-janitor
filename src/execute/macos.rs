@@ -90,6 +90,16 @@ pub(crate) fn lstat_flags(p: &Path) -> io::Result<u32> {
     Ok(lstat(p)?.st_flags as u32)
 }
 
+/// lstat `(st_dev, st_ino)` identity probe — the filesystem-truthful identity of a
+/// directory, used to reconcile two path *spellings* of one directory. APFS
+/// firmlinks make `/private/tmp` and `/System/Volumes/Data/private/tmp` the same
+/// inode reached by different strings, which `canonicalize()` cannot see (it
+/// resolves symlinks only). Two paths denote one directory iff this pair matches.
+pub(crate) fn lstat_identity(p: &Path) -> io::Result<(u64, u64)> {
+    let st = lstat(p)?;
+    Ok((st.st_dev as u64, st.st_ino as u64))
+}
+
 /// lstat `st_dev` probe — same-volume check at apply time (EXDEV armor).
 pub(crate) fn lstat_dev(p: &Path) -> io::Result<u64> {
     Ok(lstat(p)?.st_dev as u64)

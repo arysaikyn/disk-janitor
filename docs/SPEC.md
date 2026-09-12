@@ -7,8 +7,8 @@
 > Course: 程序设计训练（Rust 语言）(30240522-3), THU CS. Keep this file in sync with the
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
-**Status snapshot (2026-09-08; updated 2026-09-12):** design 100% · implementation M1–M4 done
-(112 tests green; M5 = submission deliverables in progress) ·
+**Status snapshot (2026-09-08; updated 2026-09-13):** design 100% · implementation M1–M4 done
+(115 tests green; M5 = submission deliverables in progress) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-31
 confirmed (Round 4 landed 09-01) · course deadlines re-verified 09-08 against the official
 作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
@@ -301,7 +301,7 @@ amended in the same pass.
 | Research (21 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged) |
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
-| **Implementation** | ✅ **M1–M4 done** — 112 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-12) |
+| **Implementation** | ✅ **M1–M4 done** — 115 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-13) |
 | **09-10 课堂展示** (5 min demo + 2 min Q&A; 25 pts) | ✅ delivered 09-10 — deck committed at `docs/presentation/ai-experience.{html,pdf,png}` (`acd44e3`); competitor/presentation research: note 13 |
 | **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ deadline passed — **no recorded evidence the "≥3 作品试用反馈" post is live**; 09-06 公开展示帖 status likewise unverified. Confirm both are posted before the 9.13 submission |
 
@@ -2188,7 +2188,7 @@ the shelved crates were never declared, so the feature list is now exactly the o
 
 | Dependency | Risk | Mitigation |
 |---|---|---|
-| dua-core 3.3.0→4.0.0 | 10-day-old standalone crate at first audit (3.3.0, 2026-08-28, ~10k downloads) — most likely to churn | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; **112 tests green by default / 122 with `--features llm`** (counts re-verified 2026-09-12), incl. walker/syscall suites. Fallback = `ignore::WalkParallel` unchanged (pre-planned, not vendored). Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
+| dua-core 3.3.0→4.0.0 | 10-day-old standalone crate at first audit (3.3.0, 2026-08-28, ~10k downloads) — most likely to churn | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; **115 tests green by default / 125 with `--features llm`** (counts re-verified 2026-09-13), incl. walker/syscall suites. Fallback = `ignore::WalkParallel` unchanged (pre-planned, not vendored). Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
 | ratatui 0.30.2 / crossterm 0.29 | **shelved with the GUI pivot (ADR-5/18) — not declared.** Kept as a risk note in case the TUI returns: crossterm 0.30 does not exist yet; when a new major lands, ratatui moves and every direct crossterm use must move in the same commit (separate event queues per major = race/lost-event risk) | If revived, pin `crossterm = "0.29"` next to `ratatui = "0.30"`; check transitive deps in CI [06] |
 | reqwest 0.13.x (**transitive**) | 0.13.0 broke with rustls-default (crypto provider aws-lc-rs); `query`/`form` became opt-in; `json` default-on "verify at build time". Not a direct dep — we inherit async-openai's pin | Pin only via `Cargo.lock`; test base-URL overrides (DeepSeek/OpenRouter/Ollama/vLLM) at build time [07] |
 | async-openai 0.41.3 | fine-grained feature churn (`chat-completion`, `middleware`, `byot`); 0.41.3 released 2026-07-31 | Pin exact; compile only `chat-completion` [07] |

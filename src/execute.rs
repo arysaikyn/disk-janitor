@@ -300,7 +300,8 @@ fn quarantine_root_for_source(src: &Path, vol: &VolumeInfo) -> PathBuf {
 /// path's grandparent). "Keep it cheap": a candidate counts only when
 /// `wal.jsonl` or `ledger.jsonl` exists inside it (existence probe, never a
 /// directory walk) — the caller re-checks before opening. Results are deduped
-/// by canonical path so the two spellings reconcile exactly once.
+/// by FILESYSTEM IDENTITY and reported under their canonical spelling, so the
+/// two spellings of one directory reconcile exactly once.
 fn discover_quarantine_roots(
     vols: &[VolumeInfo],
     extra: impl Iterator<Item = PathBuf>,
@@ -329,15 +330,39 @@ fn discover_quarantine_roots(
             cur = p.parent();
         }
     }
-    // Dedupe by CANONICAL path — /tmp/x and /private/tmp/x are the same dir
-    // with two spellings; each must count and reconcile exactly once.
-    let mut canon: Vec<PathBuf> = roots
-        .iter()
-        .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
-        .collect();
-    canon.sort();
-    canon.dedup();
-    canon
+    // Dedupe by FILESYSTEM IDENTITY, not path string (Bug 3). `canonicalize()`
+    // resolves symlinks but NOT APFS firmlinks: `/private/tmp/x` and
+    // `/System/Volumes/Data/private/tmp/x` canonicalize to different strings
+    // while being the same directory (same st_dev + st_ino). String dedupe let
+    // both survive, so every root-iterating pass — restore's pair loop and
+    // recover's WAL reconcile — processed one op twice: restore counted N
+    // phantoms in `missing`, because pass 1 moved the files back and pass 2
+    // found them gone. Identity is the invariant; the canonical string is only
+    // the fallback for a root that does not exist yet (stat fails).
+    let mut seen_ident: HashSet<(u64, u64)> = HashSet::new();
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen_str: HashSet<PathBuf> = HashSet::new();
+    for root in roots {
+        match macos::lstat_identity(&root) {
+            Ok(id) => {
+                if seen_ident.insert(id) {
+                    // Report the canonical spelling (the pre-Bug-3 contract: one
+                    // stable path per directory); identity alone picks WHICH.
+                    out.push(root.canonicalize().unwrap_or(root));
+                }
+            }
+            // Unstattable root (not yet created, or unreadable): fall back to the
+            // canonical string so a genuine duplicate spelling still collapses.
+            Err(_) => {
+                let canon = root.canonicalize().unwrap_or_else(|_| root.clone());
+                if seen_str.insert(canon) {
+                    out.push(root);
+                }
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 fn is_dir_writable(dir: &Path) -> bool {
@@ -1162,5 +1187,64 @@ mod tests {
         fs::write(op.join("f.bin-1"), b"2").unwrap();
         let to = pick_free_target(&op, std::ffi::OsStr::new("f.bin")).unwrap();
         assert_eq!(to, op.join("f.bin-2"));
+    }
+
+    /// Bug 3: `/private/tmp/x` and `/System/Volumes/Data/private/tmp/x` are ONE
+    /// directory — an APFS firmlink, so they share st_dev+st_ino while
+    /// `canonicalize()` returns two different strings. Both spellings used to
+    /// survive discovery, so every root-iterating pass handled one op twice:
+    /// restore's second pass found the files already moved back and reported
+    /// them as phantoms in `missing`. Discovery must never return one directory
+    /// twice.
+    #[test]
+    fn discover_roots_dedupes_firmlink_spelling() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().canonicalize().unwrap();
+        let aliased = PathBuf::from("/System/Volumes/Data").join(real.strip_prefix("/").unwrap());
+        assert_eq!(
+            macos::lstat_identity(&real).unwrap(),
+            macos::lstat_identity(&aliased).unwrap(),
+            "premise: {aliased:?} must firmlink-alias {real:?} on this machine"
+        );
+
+        // The primary root must exist, else both spellings fall to the string
+        // fallback and the identity path is never exercised.
+        let quar = real.join(macos::QUARANTINE_ROOT_NAME);
+        fs::create_dir(&quar).unwrap();
+        let want = macos::lstat_identity(&quar).unwrap();
+
+        let vol = VolumeInfo {
+            dev: want.0,
+            mount: real.clone(),
+            fs: "apfs".into(),
+            total: 0,
+            free_raw: 0,
+            free_important: 0,
+            free_opportunistic: 0,
+            read_only: false,
+            rename_excl: true,
+        };
+        let roots = discover_quarantine_roots(
+            std::slice::from_ref(&vol),
+            std::iter::once(aliased.join(macos::QUARANTINE_ROOT_NAME)),
+        );
+
+        let ids: Vec<(u64, u64)> = roots
+            .iter()
+            .filter_map(|r| macos::lstat_identity(r).ok())
+            .collect();
+        let mut uniq = ids.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(
+            ids.len(),
+            uniq.len(),
+            "one directory must not appear twice: {roots:?}"
+        );
+        assert_eq!(
+            ids.iter().filter(|id| **id == want).count(),
+            1,
+            "the quarantine root itself must be returned once: {roots:?}"
+        );
     }
 }

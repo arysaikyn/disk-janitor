@@ -16,6 +16,8 @@ use disk_janitor::{
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
+const KIB: u64 = 1024;
+const TIB: u64 = 1024 * 1024 * 1024 * 1024;
 
 // --- equality helpers (frozen types lack PartialEq) -------------------------------
 
@@ -493,7 +495,7 @@ fn assert_default_constraints(pc: &PolicyConstraintsShape) {
 /// (f) 腾出 25 GB + 别动我这两周在跑的项目 → target_bytes + deny_under_mta.
 #[test]
 fn policy_combines_target_and_mta_rules() {
-    let c = policy::compile("腾出 25 GB，别动我这两周在跑的项目");
+    let c = policy::compile("腾出 25 GB，别动我这两周在跑的项目").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
     assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
@@ -504,7 +506,7 @@ fn policy_combines_target_and_mta_rules() {
 /// (f) 别动 Xcode 归档 → deny_globs entry expanded to the real Archives root.
 #[test]
 fn policy_xcode_archives_expands_glob() {
-    let c = policy::compile("别动 Xcode 归档");
+    let c = policy::compile("别动 Xcode 归档").expect("policy compiles");
     let home = dirs::home_dir().expect("home dir");
     let want = home
         .join("Library/Developer/Xcode/Archives")
@@ -517,7 +519,7 @@ fn policy_xcode_archives_expands_glob() {
 /// 别动 ~/Library/... → the tail becomes a glob with ~ expanded.
 #[test]
 fn policy_tilde_path_expands_glob() {
-    let c = policy::compile("别动 ~/Library/Developer/Xcode/DerivedData");
+    let c = policy::compile("别动 ~/Library/Developer/Xcode/DerivedData").expect("policy compiles");
     let home = dirs::home_dir().expect("home dir");
     let want = home
         .join("Library/Developer/Xcode/DerivedData")
@@ -529,7 +531,7 @@ fn policy_tilde_path_expands_glob() {
 /// (f) unmatched free text lands in unmatched; constraints stay at defaults.
 #[test]
 fn policy_unmatched_text_lands_in_unmatched() {
-    let c = policy::compile("随便清理点东西");
+    let c = policy::compile("随便清理点东西").expect("policy compiles");
     assert!(c.applied_rules.is_empty());
     assert_default_constraints(&c.constraints);
     assert_eq!(c.unmatched, vec!["随便清理点东西"]);
@@ -538,7 +540,7 @@ fn policy_unmatched_text_lands_in_unmatched() {
 /// Partial match: rule fires on the first clause; the rest stays unmatched.
 #[test]
 fn policy_partial_match_leaves_residue() {
-    let c = policy::compile("腾出 25 GB，顺便清理");
+    let c = policy::compile("腾出 25 GB，顺便清理").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
     assert_eq!(c.unmatched, vec!["顺便清理"]);
 }
@@ -546,7 +548,7 @@ fn policy_partial_match_leaves_residue() {
 /// (f) English 'free up 50 GB' works.
 #[test]
 fn policy_english_free_up_works() {
-    let c = policy::compile("free up 50 GB");
+    let c = policy::compile("free up 50 GB").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(50 * GIB));
     assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
 }
@@ -554,14 +556,47 @@ fn policy_english_free_up_works() {
 /// CJK-spacing tolerant: 腾出25GB with no spaces.
 #[test]
 fn policy_no_space_cjk_target() {
-    let c = policy::compile("腾出25GB");
+    let c = policy::compile("腾出25GB").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
+}
+
+/// Every advertised unit sizes correctly (Bug 1): MB/TB and the `iB` spellings
+/// used to fall through as silently-uncapped `None`, so 「腾出 500 MB」 selected
+/// every candidate. Binary multiples throughout, matching the GiB accounting.
+#[test]
+fn policy_unit_alphabet_sizes_correctly() {
+    for (sentence, want) in [
+        ("腾出 500 MB", 500 * MIB),
+        ("腾出 4MB", 4 * MIB),
+        ("腾出 500 MB 空间", 500 * MIB),
+        ("free up 500 MB", 500 * MIB),
+        ("腾出 4 TB", 4 * TIB),
+        ("腾出 4 GiB", 4 * GIB),
+        ("腾出 2 kib", 2 * KIB),
+        ("腾出 0.5 GB", GIB / 2),
+    ] {
+        let c = policy::compile(sentence).unwrap_or_else(|e| panic!("{sentence}: {e}"));
+        assert_eq!(
+            c.constraints.target_bytes,
+            Some(want),
+            "target_bytes for {sentence:?}"
+        );
+        assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
+    }
+}
+
+/// (Bug 1) A single-letter unit must end on a token boundary: 「腾出 25 goals」
+/// used to read as 25 GiB because the old arm was `starts_with('g')`.
+#[test]
+fn policy_single_letter_unit_needs_token_boundary() {
+    let err = policy::compile("腾出 25 goals").expect_err("goals is not giga");
+    assert_eq!(err, policy::PolicyError::UnrecognizedUnit("goals".into()));
 }
 
 /// 别动最近 (no explicit 两周) also maps to deny_under_mta.
 #[test]
 fn policy_bie_dong_zui_jin_is_mta() {
-    let c = policy::compile("别动最近在跑的东西");
+    let c = policy::compile("别动最近在跑的东西").expect("policy compiles");
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
 }
@@ -569,7 +604,7 @@ fn policy_bie_dong_zui_jin_is_mta() {
 /// Two 别动 clauses: one mta, one glob — both rules fire, neither double-read.
 #[test]
 fn policy_two_bie_dong_clauses_both_rules_fire() {
-    let c = policy::compile("别动最近在跑的项目，别动 Xcode 归档");
+    let c = policy::compile("别动最近在跑的项目，别动 Xcode 归档").expect("policy compiles");
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
     assert_eq!(c.constraints.deny_globs.len(), 1);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
@@ -580,7 +615,7 @@ fn policy_two_bie_dong_clauses_both_rules_fire() {
 /// yet Rule 3 still protects the tail — target_bytes AND deny_globs both fire.
 #[test]
 fn policy_space_glued_clause_target_and_deny_globs_both_fire() {
-    let c = policy::compile("腾出 25 GB 别动 Xcode 归档");
+    let c = policy::compile("腾出 25 GB 别动 Xcode 归档").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
     let home = dirs::home_dir().expect("home dir");
     let want = home
@@ -597,7 +632,7 @@ fn policy_space_glued_clause_target_and_deny_globs_both_fire() {
 /// double-read as a glob.
 #[test]
 fn policy_space_glued_mta_clause_not_double_read() {
-    let c = policy::compile("腾出 25 GB 别动最近的项目");
+    let c = policy::compile("腾出 25 GB 别动最近的项目").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
     assert!(
@@ -609,25 +644,31 @@ fn policy_space_glued_mta_clause_not_double_read() {
     assert!(c.unmatched.is_empty(), "no residue: {:?}", c.unmatched);
 }
 
-/// (D2) Unrecognized fragments — decimals, Chinese numerals — land verbatim in
-/// `unmatched` instead of silently becoming default constraints.
+/// (D2) A target verb with a number it cannot size: Chinese numerals carry no
+/// digits, so they stay soft residue (the NL compiler's normal mode). A number
+/// with an *unknown unit word* is different — it is a hard error, because
+/// silently dropping the byte target removes the selection cap.
 #[test]
 fn policy_unmatched_reports_unrecognized_fragment() {
-    let c = policy::compile("腾出 25.5 GB");
+    let c = policy::compile("腾出 五十 GB").expect("policy compiles");
     assert!(c.applied_rules.is_empty());
     assert_default_constraints(&c.constraints);
-    assert_eq!(c.unmatched, vec!["腾出 25.5 GB"]);
+    assert_eq!(c.unmatched, vec!["腾出 五十 GB"]);
 
-    let c2 = policy::compile("腾出 五十 GB");
-    assert!(c2.applied_rules.is_empty());
-    assert_eq!(c2.unmatched, vec!["腾出 五十 GB"]);
+    // A bare number with no unit at all stays soft too.
+    let c2 = policy::compile("腾出 25 个文件").expect("policy compiles");
+    assert_default_constraints(&c2.constraints);
+    assert_eq!(c2.unmatched, vec!["腾出 25 个文件"]);
+
+    let err = policy::compile("腾出 500 XB").expect_err("unknown unit is fatal");
+    assert_eq!(err, policy::PolicyError::UnrecognizedUnit("xb".into()));
 }
 
 /// (D3) 「这两周」 alone is a description, not a protection: no MTA rule without
 /// the protective verb 别动; the fragment stays unmatched.
 #[test]
 fn policy_two_weeks_alone_no_mta_rule() {
-    let c = policy::compile("腾出 25 GB，这两周");
+    let c = policy::compile("腾出 25 GB，这两周").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
     assert_eq!(c.constraints.deny_under_mta_secs, 0);
     assert!(!c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
@@ -637,7 +678,7 @@ fn policy_two_weeks_alone_no_mta_rule() {
 /// (D3 positive) 别动最近… carries the protective verb → MTA fires.
 #[test]
 fn policy_bie_dong_zui_jin_fires_mta() {
-    let c = policy::compile("别动最近的项目");
+    let c = policy::compile("别动最近的项目").expect("policy compiles");
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
     assert!(

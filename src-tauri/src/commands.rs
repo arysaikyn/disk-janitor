@@ -1,4 +1,4 @@
-//! Named IPC commands (SPEC Part C §2.3): ~10 commands, typed payloads, no raw fs.
+//! Named IPC commands (SPEC Part C §2.3): 17 commands, typed payloads, no raw fs.
 //! Scan/apply progress cross the boundary via `tauri::ipc::Channel<T>`.
 
 use std::io::Write;
@@ -380,7 +380,9 @@ pub async fn build_plan(
     let volumes = disk_janitor::scan::volumes();
     let mut pc = disk_janitor::plan::PolicyConstraintsShape::default();
     if let Some(sentence) = policy {
-        pc = disk_janitor::policy::compile(sentence.as_str()).constraints;
+        pc = disk_janitor::policy::compile(sentence.as_str())
+            .map_err(|e| e.to_string())?
+            .constraints;
     }
     if let Some(mb) = min_bytes {
         pc.min_bytes = mb;

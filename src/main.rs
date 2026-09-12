@@ -429,6 +429,7 @@ pub mod janitor_agent {
 pub mod janitor_plan {
     use std::collections::BTreeMap;
 
+    use anyhow::Context;
     use disk_janitor::Candidate;
     use disk_janitor::plan::{self, PolicyConstraintsShape};
 
@@ -445,7 +446,8 @@ pub mod janitor_plan {
         let scan: disk_janitor::scan::ScanTotals = serde_json::from_value(parsed["scan"].clone())?;
         let mut pc = match policy {
             Some(sentence) => {
-                let compiled = disk_janitor::policy::compile(sentence);
+                let compiled =
+                    disk_janitor::policy::compile(sentence).context("policy sentence rejected")?;
                 for rule in &compiled.applied_rules {
                     eprintln!("policy rule applied: {rule}");
                 }

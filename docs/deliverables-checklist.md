@@ -8,7 +8,7 @@ Status is tracked here and mirrored in the README milestone table.
 | # | Item (from 作业要求) | Status | Evidence / pointer |
 |---|---|---|---|
 | 1 | **设计文档 PDF** — 4 部分: 痛点分析 / 场景定制 ≥2 / 架构图 / 技术选型 | ⬜ export from SPEC → PDF | 痛点分析: SPEC Part A §2 (why existing tools fail) + `docs/research/` notes [01–21] · 场景定制: SPEC Part A §3 (≥2 scenarios, course mandate) · 架构图: SPEC Part B §1–§2 (30-second architecture; crate layout; ASYNC Mermaid/图待导出) · 技术选型: SPEC Part B §4 + Part D (dua-core 4.0.0 pin, Tauri 2.11.5 + Svelte 5, renamex_np, JSONL WAL) |
-| 2 | **源码 → 清华 Git + README** | 🔄 README done — **pending owner push** to the Tsinghua Git server (`lab.cs.tsinghua.edu.cn` course repo) | [`README.md`](../README.md) (brand 还我磁盘 Giveback, quickstart, gates, milestone table); repo branch `agent/repo-scaffold`, 112 tests green (122 with `--features llm`); **no git remote configured yet** |
+| 2 | **源码 → 清华 Git + README** | 🔄 README done — **pending owner push** to the Tsinghua Git server (`lab.cs.tsinghua.edu.cn` course repo) | [`README.md`](../README.md) (brand 还我磁盘 Giveback, quickstart, gates, milestone table); repo branch `agent/repo-scaffold`, 115 tests green (125 with `--features llm`); **no git remote configured yet** |
 | 3 | **AI 对话历史原始记录** | 🔄 excerpts landed per milestone — raw transcripts live in harness session history | [`docs/ai-logs/M1.md`](ai-logs/M1.md) … [`M5.md`](ai-logs/M5.md) (per-milestone: date range, key decisions, failures→fixes, test counts; 摘录 excerpts, privacy-redacted) |
 | 4 | **开销明细表 (Excel, 按阶段: 人时/calls/tokens/花费/模型/工具)** | 🔄 drafted — export to Excel format pending | [`docs/expense-sheet.md`](expense-sheet.md) (D-20 table format, USD/CNY, per-phase; see also `cost/` ledger rows in code, commit a671575) |
 

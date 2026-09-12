@@ -10,7 +10,7 @@ use std::path::PathBuf;
 struct Args {
     /// Root directory to build fixtures under (created; must be empty or new).
     root: PathBuf,
-    /// Which fixture set to build (default: all).
+    /// Which fixture set to build: a set name, or `all` (default: all).
     #[arg(long)]
     set: Option<String>,
     /// Multiply per-fixture file counts (default 1; demos size trees with this).
@@ -83,6 +83,10 @@ pub mod fixture_gen {
         let scale = scale.max(1);
 
         let picked: Vec<(&str, Builder)> = match set {
+            // `--set all` and the bare default both mean every set — the help text
+            // advertises `all`, so it must not fall through to the name lookup and
+            // error (Bug 2).
+            None | Some("all") => FIXTURES.to_vec(),
             Some(name) => {
                 let found = FIXTURES
                     .iter()
@@ -97,7 +101,6 @@ pub mod fixture_gen {
                     })?;
                 vec![found]
             }
-            None => FIXTURES.to_vec(),
         };
 
         let mut reports: Vec<FixtureReport> = Vec::new();
