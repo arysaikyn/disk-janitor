@@ -4,7 +4,7 @@
 lets you undo everything.** Native macOS desktop app (Tauri + Svelte + Rust). Course
 project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026 summer term.
 
-**Status: M1–M4 implemented and verified (91 tests green across 13 suites; CLI + GUI
+**Status: M1–M4 implemented and verified (112 tests green across 13 suites; CLI + GUI
 flows proven end-to-end) — M5 is the 9.13 submission deliverables, tracked in
 [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md).** Start reading at
 [`docs/SPEC.md`](docs/SPEC.md) (Part A = overview; History keeps the real timeline).
@@ -35,13 +35,13 @@ remove*. Every existing tool stops at byte locations or black-box verdicts. Disk
   any point recovers cleanly** [9fd33f1, 17647bb].
 - **GUI (Tauri 2.11.5 + Svelte 5)** — dashboard / scan / review / plan / ledger /
   purge-gate / settings, zh-en i18n; full flow verified in the window: scan 51 →
-  plan 44 → apply 17.7 GB → typed-gate purge → restore [abda22c].
+  plan 44 → apply 17.7 GB → typed-gate purge → restore [97d704f].
 - **NL policy (MTA)** — 「腾出 25 GB」 → plan (3 quarantine / 4 refuse) → apply →
   recover → restore end-to-end; 「别动我这两周在跑的项目」 protects project
-  activity via `.git/HEAD`, exempts build outputs [95f2fbb].
+  activity via `.git/HEAD`, exempts build outputs [77f0b97].
 - **AI without authority** — sans-IO agent proposes plans only; path-blind
-  chokepoint, budget interrupts, leak tests [8934f5f]; config.toml + env overrides
-  + redact() [a69a862].
+  chokepoint, budget interrupts, leak tests [a671575]; config.toml + env overrides
+  + redact() [3ed9545].
 - **Typed-byte purge gate** — purge demands the exact byte count typed.
 
 ## Quickstart
@@ -71,7 +71,8 @@ Crash safety: `kill -9` the app anywhere between scan and purge — next launch
 ## Test / gate commands
 
 ```bash
-cargo fmt --check && cargo clippy -D warnings && cargo test   # 91 tests, 13 suites (fixture trees only)
+cargo fmt --check && cargo clippy -D warnings && cargo test   # 112 tests, 13 suites (fixture trees only)
+cargo test --features llm                                    # 122 tests (adds the HTTP client suite)
 ```
 
 ## Milestones
@@ -80,8 +81,8 @@ cargo fmt --check && cargo clippy -D warnings && cargo test   # 91 tests, 13 sui
 |---|---|---|
 | M1 scan + classify core | ✅ | 9f4cb7c (dua-core 3.3.0 pin, syscall tests, fixture generator) |
 | M2 plan/execute + WAL + ledger | ✅ | 9fd33f1, 17647bb (crash injection, restore keep-both, non-UTF8 refusal) |
-| M3 GUI shell | ✅ | abda22c (Tauri 2.11.5, 10 IPC commands, writable-vol dedup) |
-| M4 config + agent + cost | ✅ | a69a862, 8934f5f, 95f2fbb (NL policy E2E 腾出 25 GB) |
+| M3 GUI shell | ✅ | 97d704f (Tauri 2.11.5, 10 IPC commands, writable-vol dedup) |
+| M4 config + agent + cost | ✅ | 3ed9545, a671575, 77f0b97 (NL policy E2E 腾出 25 GB) |
 | M5 submission deliverables | 🔄 | [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md) |
 
 ## Documentation
