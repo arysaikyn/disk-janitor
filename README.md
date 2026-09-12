@@ -91,7 +91,7 @@ cargo test --features llm                                    # 125 tests (adds t
 |---|---|
 | [`docs/SPEC.md`](docs/SPEC.md) | **single source of truth** — Parts A product · B technical · C UX · D dependencies, status & milestones |
 | [`docs/design-decisions.md`](docs/design-decisions.md) | 17 ADRs + the D-01…D-31 decision register (appendix) |
-| [`docs/research/`](docs/research/) | 21 verified research notes + `archive/` (competitor survey), cited as [NN] |
+| [`docs/research/`](docs/research/) | 33 verified research notes + `archive/` (competitor survey), cited as [NN] |
 | [`docs/ai-logs/`](docs/ai-logs/) | per-milestone AI conversation excerpts (graded deliverable, redacted) |
 | [`docs/expense-sheet.md`](docs/expense-sheet.md) | 开销明细表 — cost breakdown by phase (graded deliverable) |
 

@@ -1,6 +1,6 @@
 # Research Corpus — Index & Decision Sheet
 
-Status: **complete 2026-09-01** · 20 notes · every claim license/version-verified or
+Status: **complete 2026-09-13** · 33 notes · every claim license/version-verified or
 explicitly flagged · consumed by `docs/SPEC.md` Parts A–D (citations `[NN §x]`).
 
 ## How to read this corpus
@@ -11,7 +11,10 @@ Notes are additive layers, not parallel essays. Read order for a newcomer:
 2. `01`/`02` (what existing tools do + their safety models) → `08` (how to log it durably)
 3. `09`–`11` (Windows/Linux deltas) → `12` (GUI stack) → `13` (product presentation)
 4. `14`–`20` (product/UX decisions: space exploration, one-tap, protection, vault, errors,
-   parity, brand/audit)
+   parity, brand/audit) → `21` (why the reference product feels good)
+5. `22`–`33` (**borrow sweep for 技术选型** — one subsystem each; every note ends in a
+   `## Port backlog` table naming an exact symbol in this repo). Independent of each other
+   but additive over 01–21; read the one whose subsystem you are working on.
 
 ## Index
 
@@ -37,6 +40,32 @@ Notes are additive layers, not parallel essays. Read order for a newcomer:
 | 18 | Failure & error catalog | E-#### rows, CN/EN copy, P1 shape | 09-01 (corpus-grounded) |
 | 19 | Platform parity matrix | = / ≈ / − per feature per OS, packaging, honest claims | 09-01 (vendor facts queued re-verify) |
 | 20 | Brand + course-audit deliverables | name collisions (live), naming directions, deliverables checklist | 09-01 (App Store/trademark OPEN — infra) |
+| 21 | Why DaisyDisk feels good | interaction-design principle extraction (read-only, no design decisions) | verified 09-07 |
+| 22 | OSS fork viability | every candidate as fork base / component donor / reject + license virality | verified 09-13 |
+| 23 | macOS syscall wrapper crates | Darwin FS primitives: what wraps them, what doesn't, why we hand-roll | verified 09-13 |
+| 24 | Journal & crash-recovery mechanisms | framing, checksum, commit marker, torn-tail resync across 6 production journals | verified 09-13 |
+| 25 | Trash → quarantine → purge semantics | move/restore/collision/purge functions and guard predicates across the OSS families | verified 09-13 |
+| 26 | Parallel scan internals | hardlink dedup, size semantics, error policy in 10 walkers (incl. the two live bugs) | verified 09-13 |
+| 27 | Artifact-classification rulesets | how production cleaners express a rule + derived-but-regenerable decision | verified 09-13 |
+| 28 | Policy languages & size parsing | parse/eval splits, unrecognized-fragment reporting, size-unit grammar | verified 09-13 |
+| 29 | Agent frameworks & data boundaries | which Rust agent frameworks have a redaction seam; ours as structural invariant | verified 09-13 |
+| 30 | Typed IPC in Tauri 2 | tauri-specta vs hand-mirrored DTOs, `ipc::Channel<T>` internals, error wire-shapes | verified 09-13 |
+| 31 | Destructive-action UX patterns | platform guidelines + shipping ceremonies across Review/PlanReview/PurgeGate/Ledger | verified 09-13 |
+| 32 | Crash & fixture test harnesses | VOPR/redb/SQLite/sled crash-testing + property tests + fixture generation | verified 09-13 |
+| 33 | Rust safety-crate shortlist | exact revisions, licenses, advisories for the safety-primitive dependency surface | verified 09-13 |
+
+**How notes 22–33 relate to 01–21.** Notes 01–21 are *additive layers* answering "what does
+this landscape look like and what should the product be". Notes 22–33 are a second, **code-level
+borrow sweep** commissioned for the 技术选型 section: each takes one subsystem we already own
+(a named symbol in `src/`, `src-tauri/` or `app/`) and asks what shipping OSS does *inside* that
+mechanism, ending in a `## Port backlog` table of rows that name an exact destination symbol in
+this repo. They are additive over 01–21 by construction — every note opens with an explicit
+"NEW vs. already covered" statement — and they carry no design decisions. Three findings are
+**verified defects in our own code**, reproduced rather than inferred: `src/policy.rs:249`'s
+fraction-exponent panic (28), the two wrong BSD-flag constants in `src/classify/macos.rs:32-33`
+(23, re-verified 33), and the hardlink double-count + `first_dev` multi-volume prune (26).
+Reporting them is in scope for the corpus; fixing them is a code change and was out of scope
+for this research pass.
 
 Verification status: notes 01–13 verified against live sources on their research dates
 (SPEC Part B header). Notes 15/17/19 carry a **recovery flag**: their agents died before

@@ -14,8 +14,10 @@ confirmed (Round 4 landed 09-01) · course deadlines re-verified 09-08 against t
 作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
 public-demo post · 9.8 try-3-works feedback (⚠ status unverified — confirm live) · 9.10 课堂展示 (**delivered 09-10**) · 9.13
 final submission. R1–R6 mapping verified verbatim against the rubric.
-**Evidence base:** `research/` — 21 verified notes (01–13 verified at source; 14–20 landed
-09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued) + the competitor survey (archive, immutable).
+**Evidence base:** `research/` — 33 verified notes (01–13 verified at source; 14–20 landed
+09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued; 22–33 landed 09-13, the
+code-level borrow sweep behind 技术选型, each ending in a `## Port backlog` table) + the
+competitor survey (archive, immutable).
 
 **Pre-merge citation map** (existing references stay valid):
 
@@ -298,7 +300,7 @@ amended in the same pass.
 
 | Phase | Status |
 |---|---|
-| Research (21 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged) |
+| Research (33 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged); 22–33 landed 09-13 (code-level borrow sweep, `## Port backlog` per note) |
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
 | **Implementation** | ✅ **M1–M4 done** — 115 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-13) |
