@@ -3,9 +3,9 @@
 //! lstat flag/device probes, dir-fd syncs, symlink-safe recursive unlink.
 //!
 //! Constants libc 0.2.189 lacks are defined locally (SPEC [05 §reusable]):
-//! `RENAME_NOFOLLOW_ANY = 0x10`, `SF_DATALESS = 0x4000_0000`; the UF_/SF_ flag
-//! bits are spelled out here too so the module is self-contained and
-//! cross-checkable against `<sys/stat.h>`.
+//! `RENAME_NOFOLLOW_ANY = 0x10`; the `UF_*`/`SF_*` `st_flags` bits come from the
+//! canonical table in `lib.rs` and are re-exported at the bottom of the constants
+//! block, cross-checkable against `<sys/stat.h>`.
 
 use std::ffi::CString;
 use std::fs;
@@ -13,14 +13,16 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-// --- locally-defined constants (macOS <sys/stat.h>, <stdio.h>) ---
+// --- constants ---
+//
+// `RENAME_EXCL`/`RENAME_NOFOLLOW_ANY` are `<sys/stdio.h>` *rename* flags, not `st_flags`
+// bits, and libc 0.2.189 lacks `RENAME_NOFOLLOW_ANY`; they stay local to the module that
+// issues the syscall. The `UF_*`/`SF_*` `st_flags` bits live in ONE place — the canonical
+// table in `lib.rs` — and are re-exported below so `macos::UF_HIDDEN` keeps working.
 pub(crate) const RENAME_EXCL: u32 = 0x0000_0004;
 pub(crate) const RENAME_NOFOLLOW_ANY: u32 = 0x0000_0010;
-pub(crate) const UF_HIDDEN: u32 = 0x0000_8000;
-pub(crate) const UF_IMMUTABLE: u32 = 0x0000_0002;
-pub(crate) const SF_RESTRICTED: u32 = 0x0008_0000;
-pub(crate) const SF_NOUNLINK: u32 = 0x0010_0000;
-pub(crate) const SF_DATALESS: u32 = 0x4000_0000;
+
+pub(crate) use crate::{SF_DATALESS, SF_NOUNLINK, SF_RESTRICTED, UF_HIDDEN, UF_IMMUTABLE};
 
 /// Per-volume quarantine root name — `<mnt>/.Trash-janitor/`, mkdir 0700 + UF_HIDDEN.
 pub(crate) const QUARANTINE_ROOT_NAME: &str = ".Trash-janitor";

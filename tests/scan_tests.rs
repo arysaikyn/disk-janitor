@@ -5,6 +5,7 @@
 
 #![cfg(target_os = "macos")]
 
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -162,4 +163,69 @@ fn scan_start_multi_root_routes_events() {
         .collect();
     assert!(paths.contains(&dir_a.path().join("x.txt")));
     assert!(paths.contains(&dir_b.path().join("y.txt")));
+}
+
+/// SPEC §7 'Scanner edge cases' — `cross_filesystems: false` means "each root stays on
+/// its OWN filesystem". The prune used to compare every entry against the FIRST root's
+/// device, so `scan <tempdir> <other-volume>` silently dropped the whole second tree and
+/// the reverse argument kept only the second one: the emitted file set depended on the
+/// order of the roots. Neither root's tree may depend on its position in `roots`.
+#[test]
+fn scan_start_multi_root_prunes_per_root_device() {
+    // APFS sibling volume of the boot group; must be readable and on its own device.
+    // `/System/Volumes/Data` cannot serve here — it shares `/`'s st_dev behind the firmlink.
+    const OTHER: &str = "/System/Volumes/VM";
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("local.txt"), vec![7u8; 4096]).unwrap();
+
+    let dev_of = |p: &std::path::Path| std::fs::symlink_metadata(p).map_or(0, |md| md.dev());
+    let other = PathBuf::from(OTHER);
+    let dir_dev = dev_of(dir.path());
+    let other_dev = dev_of(&other);
+    assert_ne!(
+        dir_dev, other_dev,
+        "{OTHER} must be a distinct device from the tempdir to exercise the prune"
+    );
+
+    let scan = |roots: Vec<PathBuf>| -> Vec<(String, u64)> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = ScanOptions {
+            roots,
+            threads: 2,
+            cross_filesystems: false,
+            ignore: Vec::new(),
+            min_dir_bytes: 0,
+        };
+        let handle = disk_janitor::scan::start(opts, tx, cancel, Arc::new(ScanStats::default()));
+        let (mut all, _) = drain(&rx);
+        handle.join().unwrap();
+        all.sort_by(|a, b| a.parent.join(&a.name).cmp(&b.parent.join(&b.name)));
+        all.iter()
+            .map(|d| (d.parent.join(&d.name).display().to_string(), d.dev))
+            .collect()
+    };
+
+    let a_first = scan(vec![dir.path().to_path_buf(), other.clone()]);
+    let b_first = scan(vec![other.clone(), dir.path().to_path_buf()]);
+
+    assert_eq!(
+        a_first, b_first,
+        "the emitted entries must not depend on the order of the roots"
+    );
+    // The tempdir root's own file survived regardless of position.
+    assert!(
+        a_first
+            .iter()
+            .any(|(p, _)| p == &dir.path().join("local.txt").display().to_string()),
+        "the tempdir root was pruned away"
+    );
+    // And the second root's tree survived too.
+    assert!(
+        a_first
+            .iter()
+            .any(|(p, dev)| *dev == other_dev && p.starts_with(OTHER)),
+        "the {OTHER} root was pruned away"
+    );
 }

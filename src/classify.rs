@@ -112,9 +112,38 @@ pub fn candidates_from_batch(batches: Vec<DirStat>, th: &Thresholds) -> Vec<Cand
             dirs.insert(full, d.clone());
         }
     }
+    // Inode ownership: a hardlinked file is ONE inode on disk, but it appears once per
+    // link, so a naive fold adds the same bytes N times. That inflation is not caught
+    // downstream — `plan::build`'s seen_inodes and `execute::purge`'s expected total both
+    // key on the *candidate* (dev, ino), and a directory candidate has one inode, so the
+    // gate re-derives the inflated number and agrees with it instead of refusing.
+    // Exactly ONE link per inode folds, chosen deterministically as the deepest containing
+    // directory then the lexicographically smallest full path — the same ordering rule the
+    // subtree fold below uses, and independent of batch order / streaming splits.
+    let mut owners: HashMap<(u64, u64), (u16, &PathBuf, &String)> = HashMap::new();
+    for d in &batches {
+        if d.kind != Kind::File {
+            continue;
+        }
+        let Some(dir) = dirs.get(&d.parent) else {
+            continue; // file outside every indexed dir: not folded either way
+        };
+        let key = (d.dev, d.ino);
+        let better = match owners.get(&key) {
+            None => true,
+            Some((depth, parent, name)) => {
+                dir.depth > *depth
+                    || (dir.depth == *depth && (&d.parent, &d.name) < (*parent, *name))
+            }
+        };
+        if better {
+            owners.insert(key, (dir.depth, &d.parent, &d.name));
+        }
+    }
     for d in &batches {
         if d.kind == Kind::File
             && let Some(a) = aggs.get_mut(&d.parent)
+            && owners.get(&(d.dev, d.ino)) == Some(&(dirs[&d.parent].depth, &d.parent, &d.name))
         {
             a.fold_file(d.app_bytes, d.alloc_bytes, d.mtime);
         }

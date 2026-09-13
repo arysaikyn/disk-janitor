@@ -246,6 +246,29 @@ fn pnpm_and_uv_store_shapes_recognized() {
     }
 }
 
+// --- hardlinks: one inode counted once, whatever the link count ------------------------
+
+#[test]
+fn hardlinked_pair_inside_one_store_is_counted_once() {
+    let t = fixture("dj-hardlink-");
+    let root = t.path();
+    let a = root.join(".pnpm-store/files/ab/blob.bin");
+    let b = root.join(".pnpm-store/files/ab/blob2.bin");
+    write_file(&a, 500 * 1024, 5);
+    std::fs::hard_link(&a, &b).unwrap();
+
+    let inode_bytes = std::fs::symlink_metadata(&a).unwrap().blocks() * 512;
+    assert!(inode_bytes >= 500 * 1024, "fixture must own real bytes");
+
+    let cands = candidates_from_batch(walk(root), &th());
+    let c = by_path(&cands, &root.join(".pnpm-store"));
+    assert_eq!(
+        c.alloc_bytes, inode_bytes,
+        "two links to one inode must contribute those bytes once, not twice"
+    );
+    assert_eq!(c.app_bytes, 500 * 1024, "apparent size dedups the same way");
+}
+
 // --- gates: unknown class and below-min bytes are NOT candidates ---------------------
 
 #[test]
@@ -407,6 +430,91 @@ fn probe_flags_sees_uf_hidden() {
     let flags = probe_flags(&dir);
     assert_ne!(flags, 0, "UF_HIDDEN must surface as nonzero flags");
     assert_ne!(flags & (libc::UF_HIDDEN as u32), 0, "UF_HIDDEN bit set");
+}
+
+/// The canonical `st_flags` table in `disk_janitor` must equal the OS ABI, not a
+/// remembered copy. A previous local copy declared `UF_DATAVAULT = 0x1000_0000` and
+/// `SF_RESTRICTED = 0x0000_0800` — both bit positions the SDK leaves unassigned — so
+/// `probe_flags` could never match a genuinely restricted file, and `SF_RESTRICTED`
+/// meant two different things in one crate.
+///
+/// The oracle is the SDK header itself: every `UF_*`/`SF_*` constant we declare is
+/// looked up in `$(xcrun --show-sdk-path)/usr/include/sys/stat.h` and compared. This
+/// also fails if a future SDK reassigns a bit we depend on.
+#[test]
+fn bsd_flag_constants_match_the_sdk_header() {
+    const CANONICAL: &[(&str, u32)] = &[
+        ("UF_SETTABLE", disk_janitor::UF_SETTABLE),
+        ("UF_NODUMP", disk_janitor::UF_NODUMP),
+        ("UF_IMMUTABLE", disk_janitor::UF_IMMUTABLE),
+        ("UF_APPEND", disk_janitor::UF_APPEND),
+        ("UF_OPAQUE", disk_janitor::UF_OPAQUE),
+        ("UF_COMPRESSED", disk_janitor::UF_COMPRESSED),
+        ("UF_TRACKED", disk_janitor::UF_TRACKED),
+        ("UF_DATAVAULT", disk_janitor::UF_DATAVAULT),
+        ("UF_HIDDEN", disk_janitor::UF_HIDDEN),
+        ("SF_SUPPORTED", disk_janitor::SF_SUPPORTED),
+        ("SF_SETTABLE", disk_janitor::SF_SETTABLE),
+        ("SF_SYNTHETIC", disk_janitor::SF_SYNTHETIC),
+        ("SF_ARCHIVED", disk_janitor::SF_ARCHIVED),
+        ("SF_IMMUTABLE", disk_janitor::SF_IMMUTABLE),
+        ("SF_APPEND", disk_janitor::SF_APPEND),
+        ("SF_RESTRICTED", disk_janitor::SF_RESTRICTED),
+        ("SF_NOUNLINK", disk_janitor::SF_NOUNLINK),
+        ("SF_FIRMLINK", disk_janitor::SF_FIRMLINK),
+        ("SF_DATALESS", disk_janitor::SF_DATALESS),
+    ];
+
+    let sdk = std::process::Command::new("xcrun")
+        .args(["--show-sdk-path"])
+        .output()
+        .expect("xcrun must run on a macOS dev machine");
+    assert!(sdk.status.success(), "xcrun --show-sdk-path failed");
+    let header = std::path::PathBuf::from(String::from_utf8_lossy(&sdk.stdout).trim())
+        .join("usr/include/sys/stat.h");
+    let text = std::fs::read_to_string(&header)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", header.display()));
+
+    // Live `#define NAME 0x…` lines only — commented-out ones (UF_NOUNLINK, SF_SNAPSHOT)
+    // are FreeBSD-reserved and carry no assigned bit.
+    let mut declared: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("#define") else {
+            continue;
+        };
+        let mut it = rest.split_whitespace();
+        let (Some(name), Some(value)) = (it.next(), it.next()) else {
+            continue;
+        };
+        if !(name.starts_with("UF_") || name.starts_with("SF_")) {
+            continue;
+        }
+        if let Some(hex) = value.strip_prefix("0x")
+            && let Ok(v) = u64::from_str_radix(hex, 16)
+        {
+            declared.insert(name.to_string(), v);
+        }
+    }
+    assert!(
+        declared.len() > 10,
+        "parsed only {} flag defines from {} — header format changed?",
+        declared.len(),
+        header.display()
+    );
+
+    for (name, ours) in CANONICAL {
+        let sdk_value = declared
+            .get(*name)
+            .unwrap_or_else(|| panic!("{name} is not a live #define in the SDK header"));
+        assert_eq!(
+            u64::from(*ours),
+            *sdk_value,
+            "{name}: our table says {:#010x}, the SDK says {:#010x}",
+            ours,
+            sdk_value
+        );
+    }
 }
 
 // --- [03 §6] sparse files: HandsOff; quarantine ⇒ Redownloadable -----------------------

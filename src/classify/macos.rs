@@ -5,7 +5,10 @@ use std::time::SystemTime;
 
 use crate::classify::{Ancestry, PathClass};
 use crate::scan::{DirAgg, DirStat, Kind, dirstat_path_hash};
-use crate::{Candidate, Evidence, EvidenceKind, Grade, Strength, Thresholds};
+use crate::{
+    Candidate, Evidence, EvidenceKind, Grade, SF_DATALESS, SF_NOUNLINK, SF_RESTRICTED, Strength,
+    Thresholds, UF_DATAVAULT, UF_IMMUTABLE,
+};
 
 const MANIFESTS: &[&str] = &[
     "package.json",
@@ -27,13 +30,6 @@ const LOCKFILES: &[&str] = &[
     "Pipfile.lock",
     "Gemfile.lock",
 ];
-/// BSD flag bits (xnu bsd/sys/stat.h) — classify treats any as a block/handoff signal.
-pub const UF_IMMUTABLE: u32 = 0x0000_0002;
-pub const UF_DATAVAULT: u32 = 0x1000_0000;
-pub const SF_RESTRICTED: u32 = 0x0000_0800;
-pub const SF_NOUNLINK: u32 = 0x0010_0000;
-pub const SF_DATALESS: u32 = 0x4000_0000;
-
 /// lstat + BSD flags probe (dua-core does not surface flags; see scan contract).
 pub fn probe_flags(path: &Path) -> u32 {
     let Ok(c) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {

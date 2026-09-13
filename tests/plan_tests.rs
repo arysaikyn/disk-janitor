@@ -585,6 +585,34 @@ fn policy_unit_alphabet_sizes_correctly() {
     }
 }
 
+/// (Bug 1) A fraction digit run longer than u64's power-of-ten range used to
+/// panic in debug (`attempt to multiply with overflow` at `10u64.pow(20)`) and
+/// silently wrap its denominator in release, yielding a wrong nonzero target.
+#[test]
+fn policy_absurd_fraction_digits_do_not_panic() {
+    let c = policy::compile("腾出 0.00000000000000000001 GB").expect("policy compiles");
+    assert_eq!(
+        c.constraints.target_bytes,
+        Some(0),
+        "a sub-byte fraction caps at zero, matching 腾出 0 GB"
+    );
+    assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
+}
+
+/// Ordinary fractions stay exact — the hardening must not round them away.
+#[test]
+fn policy_fractional_units_stay_exact() {
+    for (sentence, want) in [
+        ("腾出 1.5 MB", MIB + MIB / 2),
+        ("腾出 0.25 TB", TIB / 4),
+        ("腾出 0.00001 GB", GIB / 100_000),
+    ] {
+        let c = policy::compile(sentence).unwrap_or_else(|e| panic!("{sentence}: {e}"));
+        assert_eq!(c.constraints.target_bytes, Some(want), "{sentence:?}");
+        assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
+    }
+}
+
 /// (Bug 1) A single-letter unit must end on a token boundary: 「腾出 25 goals」
 /// used to read as 25 GiB because the old arm was `starts_with('g')`.
 #[test]

@@ -13,11 +13,10 @@ use std::sync::Mutex;
 use crossbeam_channel::{Receiver, Sender};
 use disk_janitor::execute::{self, ExecEvent, Executor};
 use disk_janitor::ledger::{self, Kind, LedgerRecord};
-use disk_janitor::{Grade, PlanAction, PlanEntry, VolumeInfo, WalEntry, WalKind, path_hash};
+use disk_janitor::{
+    Grade, PlanAction, PlanEntry, UF_HIDDEN, VolumeInfo, WalEntry, WalKind, path_hash,
+};
 use tempfile::TempDir;
-
-/// UF_HIDDEN (macOS <sys/stat.h>) — execute::macos keeps its consts crate-private.
-const UF_HIDDEN: u32 = 0x0000_8000;
 
 /// env is process-global; every test that touches DISK_JANITOR_HOME serializes
 /// on this so parallel test threads never clobber each other.

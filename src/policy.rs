@@ -245,8 +245,15 @@ fn parse_size(rest: &str) -> Result<Option<(usize, u64)>, PolicyError> {
         if j == frac_start {
             return Ok(None); // "25." with no fraction digits
         }
+        let digits = j - frac_start;
         frac_num = rest[frac_start..j].parse().unwrap_or(0);
-        frac_den = 10u64.pow((j - frac_start) as u32);
+        // A digit run this long is far below one byte for every unit in UNITS
+        // (the largest is TiB, so 1e-19 TiB < 1 B), so contribute 0 rather than
+        // panicking on `10u64.pow`. The span is still consumed below, keeping
+        // the matched/unmatched split unchanged.
+        frac_den = 10u64
+            .checked_pow(u32::try_from(digits).unwrap_or(u32::MAX))
+            .unwrap_or(0);
         i = j;
     }
     i += skip_ws(&rest[i..]);
@@ -262,7 +269,12 @@ fn parse_size(rest: &str) -> Result<Option<(usize, u64)>, PolicyError> {
         .map(|(_, m)| *m)
         .ok_or_else(|| PolicyError::UnrecognizedUnit(token.clone()))?;
     let whole_bytes = whole.checked_mul(mult);
-    let frac_bytes = (frac_num.saturating_mul(mult)) / frac_den;
+    // `frac_den == 0` means the fraction digit run exceeded u64's power-of-ten range —
+    // sub-byte by construction, so it contributes 0 (and never divides by zero).
+    let frac_bytes = frac_num
+        .saturating_mul(mult)
+        .checked_div(frac_den)
+        .unwrap_or(0);
     match whole_bytes {
         Some(w) => Ok(Some((i + token_len, w.saturating_add(frac_bytes)))),
         None => Ok(None), // absurd magnitude: fall through as unmatched, as before

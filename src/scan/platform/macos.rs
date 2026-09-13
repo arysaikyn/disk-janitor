@@ -67,11 +67,19 @@ fn run(
         }
     }
     let ignore_set = ignore_builder.build().ok();
-    let first_dev: Option<u64> = opts
+    // Per-root device table, indexed like `roots`. Comparing every entry against the
+    // FIRST root's device made the prune order-dependent: `scan /tmp /Volumes/X` kept
+    // only /tmp's tree and dropped all of X, while the reverse argument kept only X.
+    // A root's own device is what "stay on this filesystem" has to mean.
+    let root_devs: Vec<Option<u64>> = opts
         .roots
-        .first()
-        .and_then(|p| std::fs::symlink_metadata(p).ok())
-        .map(|md| std::os::unix::fs::MetadataExt::dev(&md));
+        .iter()
+        .map(|p| {
+            std::fs::symlink_metadata(p)
+                .ok()
+                .map(|md| std::os::unix::fs::MetadataExt::dev(&md))
+        })
+        .collect();
     let cross_fs = opts.cross_filesystems;
     let walk_opts = dua_core::Options {
         skip_metadata: false,
@@ -86,7 +94,7 @@ fn run(
             threads,
             dua_core::Order::ParentFirst,
             walk_opts,
-            move |_root_idx, entry| {
+            move |root_idx, entry| {
                 if cancel_walk.load(std::sync::atomic::Ordering::Relaxed) {
                     return false;
                 }
@@ -98,8 +106,8 @@ fn run(
                     return false;
                 }
                 if !cross_fs
-                    && let Some(dev) = first_dev
-                    && md.dev() != dev
+                    && let Some(Some(dev)) = root_devs.get(root_idx)
+                    && md.dev() != *dev
                 {
                     return false; // cross-filesystem reject — firmlink-safe st_dev check
                 }

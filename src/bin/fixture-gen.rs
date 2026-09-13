@@ -35,6 +35,7 @@ pub mod fixture_gen {
     use std::time::{Duration, SystemTime};
 
     use anyhow::{Context, Result, bail};
+    use disk_janitor::UF_HIDDEN;
 
     const FILLER: u8 = b'x'; // deterministic content: exact byte sizes, byte-identical re-runs
     const CHUNK: usize = 64 * 1024;
@@ -43,11 +44,6 @@ pub mod fixture_gen {
     /// now − 2h: comfortably outside the 600s hot-mtime window (spec says cold trees must
     /// NOT surface as `MtimeHot`).
     const COLD_SECS: u64 = 2 * 3600;
-
-    #[cfg(target_os = "macos")]
-    const UF_HIDDEN: u32 = 0x0000_8000;
-    #[cfg(not(target_os = "macos"))]
-    const UF_HIDDEN: u32 = 0;
 
     // ------------------------------------------------------------------ types
 

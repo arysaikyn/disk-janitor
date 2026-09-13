@@ -204,3 +204,56 @@ pub fn path_hash(path: &std::path::Path) -> PathHash {
     }
     hash.to_be_bytes()
 }
+
+// --- macOS BSD file flags (`st_flags`) — the single canonical table ------------------
+//
+// ONE SDK-correct definition, shared by `classify/` (block/handoff evidence), `execute/`
+// (apply-time TOCTOU re-probe) and the fixture generator. Do NOT re-declare these bits
+// per module: a second copy previously drifted, and `SF_RESTRICTED` held two different
+// values in this one crate.
+//
+// Values verified against `$(xcrun --show-sdk-path)/usr/include/sys/stat.h`. `UF_*` are
+// the user-settable (UP) flags, `SF_*` the super-user ones. libc 0.2.189 exposes only
+// UF_SETTABLE…UF_HIDDEN, SF_SETTABLE, SF_ARCHIVED, SF_IMMUTABLE and SF_APPEND — the
+// remaining bits are spelled out here because libc does not have them.
+//
+// Absent on purpose: `UF_NOUNLINK` and `SF_SNAPSHOT` (xnu comments both out as
+// FreeBSD-reserved, so no live bit is assigned), and `SF_HIDDEN` (the header states it
+// does not exist).
+
+/// Mask of user-settable (`UF_*`) bits.
+pub const UF_SETTABLE: u32 = 0x0000_ffff;
+pub const UF_NODUMP: u32 = 0x0000_0001;
+/// Immutable: cannot be written, unlinked or renamed.
+pub const UF_IMMUTABLE: u32 = 0x0000_0002;
+/// Append-only.
+pub const UF_APPEND: u32 = 0x0000_0004;
+/// Opaque (union-mount member).
+pub const UF_OPAQUE: u32 = 0x0000_0008;
+/// Compressed by the filesystem.
+pub const UF_COMPRESSED: u32 = 0x0000_0020;
+pub const UF_TRACKED: u32 = 0x0000_0040;
+/// Data-vault protected — an entitlement is required to read or write.
+pub const UF_DATAVAULT: u32 = 0x0000_0080;
+/// Hidden from Finder.
+pub const UF_HIDDEN: u32 = 0x0000_8000;
+
+/// Mask of super-user (`SF_*`) bits supported on this platform.
+pub const SF_SUPPORTED: u32 = 0x009f_0000;
+/// Mask of super-user (`SF_*`) bits settable via `chflags(2)`.
+pub const SF_SETTABLE: u32 = 0x3fff_0000;
+/// Mask marking the flags a filesystem synthesises rather than stores.
+pub const SF_SYNTHETIC: u32 = 0xc000_0000;
+pub const SF_ARCHIVED: u32 = 0x0001_0000;
+/// Immutable: the super-user counterpart of `UF_IMMUTABLE`.
+pub const SF_IMMUTABLE: u32 = 0x0002_0000;
+/// Append-only: the super-user counterpart of `UF_APPEND`.
+pub const SF_APPEND: u32 = 0x0004_0000;
+/// Data-vault protected — an entitlement is required to write.
+pub const SF_RESTRICTED: u32 = 0x0008_0000;
+/// Cannot be unlinked even by an owning process.
+pub const SF_NOUNLINK: u32 = 0x0010_0000;
+/// Firmlink: the entry redirects to the data volume.
+pub const SF_FIRMLINK: u32 = 0x0080_0000;
+/// Dataless: the content lives in iCloud and must be materialised first.
+pub const SF_DATALESS: u32 = 0x4000_0000;
