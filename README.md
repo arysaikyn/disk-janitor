@@ -4,7 +4,7 @@
 lets you undo everything.** Native macOS desktop app (Tauri + Svelte + Rust). Course
 project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026 summer term.
 
-**Status: M1–M4 implemented and verified (120 tests green across 13 suites; CLI + GUI
+**Status: M1–M4 implemented and verified (121 tests green across 13 suites; CLI + GUI
 flows proven end-to-end) — M5 is the 9.13 submission deliverables, tracked in
 [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md).** Start reading at
 [`docs/SPEC.md`](docs/SPEC.md) (Part A = overview; History keeps the real timeline).
@@ -71,8 +71,8 @@ Crash safety: `kill -9` the app anywhere between scan and purge — next launch
 ## Test / gate commands
 
 ```bash
-cargo fmt --check && cargo clippy -D warnings && cargo test   # 120 tests, 13 suites (fixture trees only)
-cargo test --features llm                                    # 130 tests (adds the HTTP client suite)
+cargo fmt --check && cargo clippy -D warnings && cargo test   # 121 tests, 13 suites (fixture trees only)
+cargo test --features llm                                    # 131 tests (adds the HTTP client suite)
 ```
 
 ## Milestones

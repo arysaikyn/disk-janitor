@@ -8,20 +8,30 @@
 
 #![cfg(target_os = "macos")]
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel;
 use disk_janitor::execute::{self, ExecEvent, KillPoint};
 use disk_janitor::ledger::{self, Kind};
-use disk_janitor::{Grade, PlanAction, PlanEntry, VolumeInfo, WalKind, path_hash};
+use disk_janitor::{Grade, PathHash, PlanAction, PlanEntry, VolumeInfo, WalKind, path_hash};
 use tempfile::TempDir;
 
 const CRASH_FLAG: &str = "CRASH_CHILD";
 const A_BYTES: u64 = 128;
 const B_BYTES: u64 = 256;
+
+/// The sweep child touches this file immediately before calling `apply()`.
+/// The parent polls for it before starting the kill clock, so the random delay
+/// lands inside `apply`'s durable window (measured 19-57 ms for a 2-entry
+/// plan) instead of inside dyld/libtest startup, which is ~300 ms of the
+/// ~350 ms child lifetime. Without the anchor the sweep is vacuous: a 0-60 ms
+/// sleep from `spawn()` almost always kills before any durable work happens.
+const SWEEP_READY: &str = "sweep-ready";
 
 /// Parse a per-volume wal.jsonl (LedgerStore envelope format) into bare entries.
 fn wal_entries(path: &Path) -> Vec<disk_janitor::WalEntry> {
@@ -111,6 +121,47 @@ fn child_apply(home: &Path, vol: &Path, plan_id: &str) {
     let _ = ex.apply(tx, None);
     // Unreachable when KILL_AT is honored — the kill fires inside apply.
     panic!("child apply returned without hitting the kill point");
+}
+
+/// Child-mode body for the row-56 sweep. Runs a FULL apply with no named kill
+/// point (`KILL_AT="Sweep"` parses to `None`, so `apply` runs to completion) —
+/// the parent SIGKILLs this process at a random moment instead. The ready
+/// sentinel is written BEFORE `apply`, i.e. after the executor is built but
+/// before the first WAL intent, so the parent's kill window straddles the
+/// durable work rather than the process startup.
+///
+/// No `panic!` tail (unlike `child_apply`): this child is *expected* to either
+/// die mid-apply or finish normally, and a finished child must exit 0 so the
+/// parent can distinguish "swept past the end" from a real failure.
+fn child_apply_sweep(home: &Path, vol: &Path, plan_id: &str) {
+    let store = ledger::open(home).expect("child home ledger");
+    let mut ex = execute::open(
+        plan_id.to_string(),
+        build_entries(vol),
+        &[vol_info(vol)],
+        store,
+    )
+    .expect("child executor");
+    fs::write(home.join(SWEEP_READY), b"1").expect("ready sentinel");
+    let (tx, _rx) = crossbeam_channel::unbounded::<ExecEvent>();
+    let _ = ex.apply(tx, None);
+}
+
+/// Spawn the sweep child WITHOUT waiting (`.spawn()`, not `.status()`): the
+/// parent kills it at a random offset. stdout/stderr are discarded so a swept
+/// child's own libtest chatter can never interleave with the parent's.
+fn spawn_sweep(home: &Path, vol: &Path, plan_id: &str) -> Child {
+    Command::new(std::env::current_exe().expect("test binary path"))
+        .env(CRASH_FLAG, "1")
+        .env("KILL_AT", "Sweep")
+        .env("CHILD_HOME", home)
+        .env("CHILD_VOL", vol)
+        .env("CHILD_PLAN_ID", plan_id)
+        .env("DISK_JANITOR_HOME", home)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn sweep child")
 }
 
 /// True when `dir` (or its probe file) is writable by us — the same probe
@@ -222,6 +273,8 @@ fn crash_dispatch(point: &str) -> bool {
             child_apply_sip_fallback(&home, &vol, &plan_id);
         } else if point == "MidPurge" {
             child_apply_then_purge(&home, &vol, &plan_id);
+        } else if point == "Sweep" {
+            child_apply_sweep(&home, &vol, &plan_id);
         } else {
             child_apply(&home, &vol, &plan_id);
         }
@@ -776,4 +829,329 @@ fn crash_sip_fallback_anchor_recovered() {
     let mut perms = fs::metadata(&vol).unwrap().permissions();
     perms.set_readonly(false);
     fs::set_permissions(&vol, perms).unwrap();
+}
+
+/// Which durable boundary a killed child had crossed. Derived only from
+/// observable artifacts (WAL lines + home-ledger recs), never from the child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SweepStage {
+    /// Nothing synced — kill landed before the first WAL intent.
+    PreDurable,
+    /// An intent with no matching result — the `AfterWalSyncBeforeRename` shape.
+    MidPair,
+    /// Every intent has a result, but a home-ledger `Apply` rec is missing —
+    /// the `src/execute.rs:688..691` gap that no named `KillPoint` covers.
+    ResultNoRec,
+    /// Every synced result already has its home-ledger `Apply` rec — no gap.
+    /// Not a claim that the whole plan ran: a plan killed after entry 1 of 2
+    /// lands here with a clean single-entry boundary.
+    RecsComplete,
+}
+
+/// Every file under `root` (recursively) whose bytes are exactly `len`
+/// repetitions of `pattern`. The sweep oracle matches by CONTENT, never by
+/// filename: `pick_free_target`/`rename_with_retry` may append `-<n>` to a
+/// quarantine name, so a name-keyed oracle would report a phantom loss.
+fn locations_with_content(root: &Path, pattern: u8, len: u64) -> Vec<PathBuf> {
+    let want = vec![pattern; len as usize];
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for dent in rd.flatten() {
+            let p = dent.path();
+            let Ok(md) = fs::symlink_metadata(&p) else {
+                continue;
+            };
+            if md.is_dir() {
+                stack.push(p);
+            } else if fs::read(&p).is_ok_and(|b| b == want) {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Row 56 — the random-moment kill sweep: an UNNAMED kill point, N iterations.
+///
+/// The five named `KillPoint` values can only fire at five hand-placed sites, so
+/// a bug living in the gaps between them is unreachable by construction — most
+/// notably the window between the WAL Result sync and the home-ledger `Apply`
+/// append (`src/execute.rs:688..691`), which no named point covers. This test
+/// SIGKILLs the child at a uniformly random moment instead, and checks the one
+/// invariant that must hold at EVERY landing site: **byte conservation** — each
+/// fixture exists, with its exact content, in exactly one place (source or
+/// quarantine). Zero locations means lost data; two means a phantom copy.
+///
+/// Anchoring: the kill clock starts only after the child touches the ready
+/// sentinel, because ~300 ms of the ~350 ms child lifetime is dyld/libtest
+/// startup — a sleep measured from `spawn()` would almost always kill before
+/// any durable work. `apply()` itself takes 19-57 ms for this 2-entry plan
+/// (measured), which is what the 0-61 ms window is calibrated against.
+///
+/// What this test deliberately does NOT assert: that the quarantine root is
+/// empty after recovery (a kill between `mkdir op_dir` and the first intent
+/// legally leaves a stray empty op dir that `recover()` only removes on the
+/// dangling branch), and that every quarantined entry has a home-ledger
+/// `Apply` rec (a kill in the Result→append gap legitimately leaves none —
+/// the file is still fully restorable from the per-volume WAL pair, so
+/// requiring the rec would false-positive on a correct implementation). The
+/// second is reported as a per-iteration diagnostic instead.
+#[test]
+fn crash_sweep_unnamed_moment() {
+    if crash_dispatch("Sweep") {
+        return;
+    }
+    const N: usize = 40;
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let vol = TempDir::new().unwrap();
+    let root = vol.path().join(".Trash-janitor");
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut swept = 0usize;
+    let mut completed = 0usize;
+    let mut durable_swept = 0usize;
+    let mut sentinel_timeouts = 0usize;
+    // Stage histogram: which durable boundary the kill landed past.
+    let mut pre_durable = 0usize; // nothing synced yet
+    let mut mid_pair = 0usize; // intent without result
+    let mut result_no_rec = 0usize; // WAL pair complete, home-ledger Apply rec still missing
+    let mut recs_complete = 0usize; // every synced result has its home-ledger Apply rec
+
+    for i in 0..N {
+        // A FRESH home every iteration: the child appends its home-ledger
+        // `Apply` recs there and `recover()` replays that same file. Reusing one
+        // home across iterations would let iteration 0's completed apply satisfy
+        // every later iteration's "was a rec written?" probe — the diagnostic
+        // would read stale state and the Result->append gap would go unobserved.
+        let home = TempDir::new().unwrap();
+        // The parent must set this on ITSELF so `recover()`'s `home_ledger_dir()`
+        // reads the same ledger the child wrote; `spawn_sweep` passes it to the
+        // child via `Command::env`.
+        unsafe { std::env::set_var("DISK_JANITOR_HOME", home.path()) };
+
+        // Fresh iteration: clear the sentinel and any stale quarantine, then lay
+        // the fixtures down at their source paths.
+        fs::write(home.path().join(SWEEP_READY), b"").ok();
+        fs::remove_dir_all(&root).ok();
+        create_files(vol.path());
+
+        let mut child = spawn_sweep(home.path(), vol.path(), &format!("crash-sweep-{i}"));
+
+        // Wait until the child is inside `apply`'s durable window.
+        let sentinel = home.path().join(SWEEP_READY);
+        let anchor = Instant::now();
+        loop {
+            if fs::read(&sentinel).is_ok_and(|b| b == b"1") {
+                break;
+            }
+            if anchor.elapsed() > Duration::from_secs(5) {
+                sentinel_timeouts += 1;
+                break;
+            }
+            std::thread::sleep(Duration::from_micros(250));
+        }
+
+        // Random delay, then SIGKILL (Unix). The `apply` phase measures ~20 ms
+        // from the sentinel for this 2-entry plan, so the window is 0-32 ms: a
+        // 0-61 ms draw wastes roughly half its samples past the child's exit,
+        // which is why the first calibration run killed only 13/40 children.
+        // The window is re-measured, not assumed — an all-completed run trips
+        // the `durable_swept > 0` assertion below rather than passing vacuously.
+        let nanos = u64::from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .subsec_nanos(),
+        );
+        let mut seed = nanos ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        seed ^= seed >> 30;
+        seed = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        seed ^= seed >> 27;
+        std::thread::sleep(Duration::from_micros(seed % 32_000));
+        let _ = child.kill();
+        let status = child.wait().expect("reap sweep child");
+        // A SIGKILL reports no exit code at all, so never assert a specific one.
+        let was_swept = !status.success();
+        if was_swept {
+            swept += 1;
+        } else {
+            completed += 1;
+        }
+
+        // Crash-time state, captured BEFORE recovery mutates anything.
+        // Classifying after `recover()` would mislabel every mid-pair crash,
+        // because roll-forward writes the missing Result line.
+        let wal_path = root.join("wal.jsonl");
+        let wal = wal_entries(&wal_path);
+
+        // Conservation holds at every instant, not merely after recovery: the
+        // rename is atomic, so a fixture is in exactly one place even mid-crash.
+        for (pattern, len, name) in [
+            (0xABu8, A_BYTES, "data-a.bin"),
+            (0xCDu8, B_BYTES, "data-b.bin"),
+        ] {
+            let found = locations_with_content(vol.path(), pattern, len);
+            if found.len() != 1 {
+                failures.push(format!(
+                    "iter {i}: at crash time {name} existed in {} places ({found:?}) — an atomic rename leaves it in exactly 1",
+                    found.len()
+                ));
+            }
+        }
+
+        // WAL well-formedness of what the dead child left.
+        let mut seen: HashSet<(String, PathHash, u8)> = HashSet::new();
+        for w in &wal {
+            let tag = u8::from(matches!(w.kind, WalKind::Result));
+            if !seen.insert((w.op_id.clone(), w.entry, tag)) {
+                failures.push(format!(
+                    "iter {i}: duplicate WAL {:?} line for op_id {}",
+                    w.kind, w.op_id
+                ));
+            }
+        }
+        for r in wal.iter().filter(|w| matches!(w.kind, WalKind::Result)) {
+            let paired = wal.iter().any(|w| {
+                matches!(w.kind, WalKind::Intent) && w.op_id == r.op_id && w.entry == r.entry
+            });
+            if !paired {
+                failures.push(format!(
+                    "iter {i}: WAL Result for op_id {} has no matching Intent (same op_id AND entry)",
+                    r.op_id
+                ));
+            }
+        }
+
+        // Recovery: this is the operation under test.
+        let rr = execute::recover(&[vol_info(vol.path())]);
+
+        // Oracle — after recovery, each fixture must still be in exactly one
+        // place, matched by content (quarantine names may carry a `-<n>` suffix).
+        for (pattern, len, name) in [
+            (0xABu8, A_BYTES, "data-a.bin"),
+            (0xCDu8, B_BYTES, "data-b.bin"),
+        ] {
+            let found = locations_with_content(vol.path(), pattern, len);
+            if found.len() != 1 {
+                failures.push(format!(
+                    "iter {i}: after recover() {name} exists in {} places ({found:?}) — expected exactly 1",
+                    found.len()
+                ));
+            }
+        }
+
+        // Recovery sanitizes the torn tail before parsing; nothing torn may
+        // survive it. (`wal_has_torn_tail` is already false on a missing file.)
+        if execute::wal_has_torn_tail(&wal_path) {
+            failures.push(format!(
+                "iter {i}: recover() left a torn WAL tail at {}",
+                wal_path.display()
+            ));
+        }
+
+        // Idempotency = view stability, not emptiness: `recover()` never removes
+        // intent lines, so an intent-with-no-result state is reported identically
+        // on every call. Asserting an empty `dangling_intents` would be wrong.
+        let rr2 = execute::recover(&[vol_info(vol.path())]);
+        if rr2.rolled_forward != 0 {
+            failures.push(format!(
+                "iter {i}: a second recover() rolled forward {} more intents",
+                rr2.rolled_forward
+            ));
+        }
+        if rr2.dangling_intents.len() != rr.dangling_intents.len() {
+            failures.push(format!(
+                "iter {i}: dangling intents unstable across recover() — {} then {}",
+                rr.dangling_intents.len(),
+                rr2.dangling_intents.len()
+            ));
+        }
+        if rr.dangling_intents.len() > 2 {
+            failures.push(format!(
+                "iter {i}: {} dangling intents for a 2-entry plan",
+                rr.dangling_intents.len()
+            ));
+        }
+
+        // Diagnostic only: which durable stage the kill landed in. This reads
+        // THIS iteration's home ledger (`home` is fresh per iteration), so a
+        // missing `Apply` rec is a real observation, not another iteration's
+        // leftover. The oracle above never depends on it — a rec-less but
+        // WAL-paired entry is fully restorable, so it is not a failure.
+        let rec_paths: HashSet<PathBuf> = ledger::replay(&home.path().join("ledger.jsonl"))
+            .map(|(recs, _)| {
+                recs.iter()
+                    .filter_map(|r| match &r.rec {
+                        ledger::LedgerRecord::Apply { original_path, .. } => {
+                            Some(original_path.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let intents = wal
+            .iter()
+            .filter(|w| matches!(w.kind, WalKind::Intent))
+            .count();
+        let results = wal.len() - intents;
+        let recs_present = [vol.path().join("data-a.bin"), vol.path().join("data-b.bin")]
+            .iter()
+            .filter(|p| rec_paths.contains(*p))
+            .count();
+        let stage = if intents == 0 {
+            SweepStage::PreDurable
+        } else if results < intents {
+            SweepStage::MidPair
+        } else if recs_present < results {
+            SweepStage::ResultNoRec
+        } else {
+            SweepStage::RecsComplete
+        };
+        match stage {
+            SweepStage::PreDurable => pre_durable += 1,
+            SweepStage::MidPair => mid_pair += 1,
+            SweepStage::ResultNoRec => result_no_rec += 1,
+            SweepStage::RecsComplete => recs_complete += 1,
+        }
+        // "Reached durable work" excludes PreDurable: that stage wrote no WAL at
+        // all, so counting it would inflate the very thing the assertion below
+        // exists to prove.
+        if was_swept && !matches!(stage, SweepStage::PreDurable) {
+            durable_swept += 1;
+        }
+        println!(
+            "sweep {i:>2}: {:<9} stage={stage:?} wal={} (intent {intents} / result {results}) home-apply-recs={recs_present}/2 dangling={} rolled_fwd={}",
+            if was_swept { "SIGKILLed" } else { "completed" },
+            wal.len(),
+            rr.dangling_intents.len(),
+            rr.rolled_forward,
+        );
+    }
+
+    // Collected, so one iteration cannot mask the others.
+    assert_eq!(
+        sentinel_timeouts, 0,
+        "{sentinel_timeouts} iterations never saw the ready sentinel — the child died before apply, so the kill window is meaningless"
+    );
+    assert!(
+        swept > 0,
+        "the sweep killed no child mid-flight in {N} iterations — the kill window is miscalibrated"
+    );
+    assert!(
+        durable_swept > 0,
+        "in {N} iterations the kill never landed past the first WAL sync (all {completed} children ran to completion) — the window is too wide and the sweep would pass vacuously"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} sweep failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    println!(
+        "sweep summary: {swept} SIGKILLed / {completed} completed; stages: {pre_durable} pre-durable, {mid_pair} mid-pair, {result_no_rec} result-without-apply-rec, {recs_complete} recs-complete"
+    );
 }
