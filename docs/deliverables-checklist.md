@@ -7,18 +7,21 @@ Status is tracked here and mirrored in the README milestone table.
 
 | # | Item (from 作业要求) | Status | Evidence / pointer |
 |---|---|---|---|
-| 1 | **设计文档 PDF** — 4 部分: 痛点分析 / 场景定制 ≥2 / 架构图 / 技术选型 | ⬜ export from SPEC → PDF | 痛点分析: SPEC Part A §2 (why existing tools fail) + `docs/research/` notes [01–33] · 场景定制: SPEC Part A §3 (≥2 scenarios, course mandate) · 架构图: SPEC Part B §1–§2 (30-second architecture; crate layout; ASYNC Mermaid/图待导出) · 技术选型: SPEC Part B §4 + Part D (dua-core 4.0.0 pin, Tauri 2.11.5 + Svelte 5, renamex_np, JSONL WAL) + research notes [22–33], each ending in a `## Port backlog` naming the borrowed mechanism and its destination symbol |
-| 2 | **源码 → 清华 Git + README** | 🔄 README done — **pending owner push** to the Tsinghua Git server (`lab.cs.tsinghua.edu.cn` course repo) | [`README.md`](../README.md) (brand 还我磁盘 Giveback, quickstart, gates, milestone table); repo branch `agent/repo-scaffold`, 122 tests green (132 with `--features llm`); **no git remote configured yet** |
+| 1 | **设计文档 PDF** — 4 部分: 痛点分析 / 场景定制 ≥2 / 架构图 / 技术选型 | ✅ **shipped — 7 页 A4 PDF** | [`docs/design-document.pdf`](design-document.pdf) (2.2 MB, 7 pages A4, rendered via headless Chrome) + [`docs/design-document.md`](design-document.md) (the Markdown source, so the PDF is regenerable, not hand-built) · 1 痛点分析（判断 × 可逆性双轴 + 6 行竞品对照表）· 2 场景定制 **4 个**（构建产物 / 腾出 25 GB 且别动在跑的项目 / 删错要能拿回来 / 外置盘与不支持原子隔离的文件系统）· 3 架构设计（Mermaid 分层流程图 + 10 行模块职责表 + 数据流）· 4 技术选型（Rust 核心 R1、表 4-1/4-2 依赖取舍含 ⊘ 明确拒绝项、被采纳的设计思想）。事实全部取自 SPEC Part A §2–§3、Part B §1–§4、Part D + `docs/research/` [01–33] |
+| 2 | **源码 → 清华 Git + README** | ✅ **pushed** — 75 commits on both `main` and `agent/repo-scaffold` | Repo: **`git@git.tsinghua.edu.cn:rust-course/2026/agent/agent-aes25.git`** (default branch `main`, pushed first because the protected default branch rejected an initial feature-branch push; `agent/repo-scaffold` then fast-forwarded) · [`README.md`](../README.md) (brand 还我磁盘 Giveback, quickstart, gates, milestone table); 122 tests green (132 with `--features llm`); secret scan of the published history clean |
 | 3 | **AI 对话历史原始记录** | 🔄 excerpts landed per milestone — raw transcripts live in harness session history | [`docs/ai-logs/M1.md`](ai-logs/M1.md) … [`M5.md`](ai-logs/M5.md) (per-milestone: date range, key decisions, failures→fixes, test counts; 摘录 excerpts, privacy-redacted) |
 | 4 | **开销明细表 (Excel, 按阶段: 人时/calls/tokens/花费/模型/工具)** | ✅ **exported — Excel format shipped** | [`docs/expense-sheet.xlsx`](expense-sheet.xlsx) (the graded Excel deliverable: 分阶段 / 逐日 / 工具 / 方法 sheets) + [`docs/expense-sheet.md`](expense-sheet.md) (same tables, readable). Both emitted by `scripts/gen-expense-xlsx.py` from the mined omp session transcripts — generated, never hand-typed, so md and xlsx cannot drift |
 
 ## How to close each item
 
-1. **设计文档 PDF**: assemble the four sections from the SPEC pointers above into one
-   document, export to PDF, commit under `docs/` (or a `submission/` folder) and
-   reference it here.
-2. **源码**: owner pushes `agent/repo-scaffold` to the 清华 Git course repo; confirm
-   README renders, tests pass (`cargo fmt --check && cargo clippy -D warnings && cargo test`).
+1. **设计文档 PDF**: ✅ done — `docs/design-document.md` is the editable source;
+   `docs/design-document.pdf` is regenerated from it (Markdown → HTML with the Mermaid
+   fence rendered inline → headless Chrome `--print-to-pdf`, A4 `@page`). Edit the `.md`,
+   never the PDF.
+2. **源码**: ✅ pushed to `git.tsinghua.edu.cn/rust-course/2026/agent/agent-aes25`
+   (`main` + `agent/repo-scaffold`). Re-push after any further commit:
+   `git push origin agent/repo-scaffold && git push origin HEAD:refs/heads/main`.
+   Gates: `cargo fmt --check && cargo clippy --all-features -- -D warnings && cargo test`.
 3. **AI logs**: each `docs/ai-logs/M*.md` already summarizes its milestone; if graders
    require raw transcripts, export the full harness session history and archive it
    (pointer location TBD — keep the per-milestone files as the readable index).

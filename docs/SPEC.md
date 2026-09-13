@@ -9,6 +9,8 @@
 
 **Status snapshot (2026-09-08; updated 2026-09-13):** design 100% · implementation M1–M4 done
 (122 tests green; M5 = submission deliverables in progress) ·
+**设计文档 shipped** — `docs/design-document.pdf` (7 页 A4; source `docs/design-document.md`) ·
+**source pushed** — `git.tsinghua.edu.cn/rust-course/2026/agent/agent-aes25` (`main` + `agent/repo-scaffold`) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-31
 confirmed (Round 4 landed 09-01; D-32…D-38 dispositioned 2026-09-10 — recorded in
 `docs/decision-sheet-2026-09-10.md`, not this register) · course deadlines re-verified 09-08 against the official

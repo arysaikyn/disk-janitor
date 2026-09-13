@@ -43,15 +43,15 @@ exact total by ±0.01 h. The exact unrounded total is stated in the generated bl
 
 <!-- BEGIN GENERATED:expense — edit scripts/gen-expense-xlsx.py, not this block -->
 
-*Snapshot cutoff: **2026-09-13 15:00 +08:00 (= 2026-09-13 07:00 UTC)** — the newest activity in the corpus. Corpus: 16 top-level sessions + 132 subagent transcripts. Both this block and the `.xlsx` are emitted by the same run of `scripts/gen-expense-xlsx.py`.*
+*Snapshot cutoff: **2026-09-13 23:37 +08:00 (= 2026-09-13 15:37 UTC)** — the newest activity in the corpus. Corpus: 17 top-level sessions + 145 subagent transcripts. Both this block and the `.xlsx` are emitted by the same run of `scripts/gen-expense-xlsx.py`.*
 
 | 阶段 phase | 起止 dates | **人时 (h)** | **API次数 calls** | **输入 tokens** | **输出 tokens** | **cache read** | **总 tokens** | **花费 USD** | **花费 CNY** |
 |---|---|---|---|---|---|---|---|---|---|
 | **P0 立项 · 调研与设计** | 08-30 … 09-08 | 19.70 | 4,402 | 34,716,986 | 2,193,396 | 705,602,560 | 742,512,942 | $36.0503 | ¥259.56 |
 | **P1 M1+M2 核心引擎** | 09-09 … 09-09 | 10.37 | 3,139 | 19,372,666 | 2,237,328 | 559,675,840 | 581,285,834 | $15.1942 | ¥109.40 |
 | **P2 M3+M4 GUI 与 Agent** | 09-10 … 09-10 | 1.95 | 403 | 3,939,204 | 282,388 | 69,796,864 | 74,018,456 | $2.1356 | ¥15.38 |
-| **P3 M5 交付与收尾** | 09-12 … 09-13 | 4.83 | 3,099 | 15,325,343 | 2,442,188 | 238,025,088 | 255,792,619 | $0.0000 | ¥0.00 |
-| **合计 TOTAL** | **08-30 … 09-13** | **36.85** | **11,043** | **73,354,199** | **7,155,300** | **1,573,100,352** | **1,653,609,851** | **$53.3800** | **¥384.34** |
+| **P3 M5 交付与收尾** | 09-12 … 09-13 | 7.33 | 4,754 | 33,639,287 | 4,228,729 | 360,352,896 | 398,220,912 | $0.0000 | ¥0.00 |
+| **合计 TOTAL** | **08-30 … 09-13** | **39.34** | **12,698** | **91,668,143** | **8,941,841** | **1,695,428,160** | **1,796,038,144** | **$53.3800** | **¥384.34** |
 
 ### 模型 models (API calls per phase)
 
@@ -60,7 +60,7 @@ exact total by ±0.01 h. The exact unrounded total is stated in the generated bl
 | P0 | `glm-5.3-flash` 3,883 · `DeepSeek-V4-Flash-0731` 284 · `glm-5.2` 183 · `GLM-5.3-Flash` 46 · `deepseek-v4-flash-free` 6 |
 | P1 | `DeepSeek-V4-Flash-0731` 1,702 · `GLM-5.3-Flash` 1,437 |
 | P2 | `DeepSeek-V4-Flash-0731` 282 · `GLM-5.3-Flash` 121 |
-| P3 | `DeepSeek-V4.1-Flash` 3,099 |
+| P3 | `DeepSeek-V4.1-Flash` 4,754 |
 
 ### 工具 tools (tool invocations per phase)
 
@@ -69,8 +69,8 @@ exact total by ±0.01 h. The exact unrounded total is stated in the generated bl
 | P0 | 4,932 | `bash` 1,526 · `read` 1,484 · `grep` 545 · `edit` 348 · `web_search` 334 · `advise` 232 |
 | P1 | 3,660 | `bash` 1,186 · `read` 959 · `edit` 640 · `eval` 300 · `grep` 150 · `hub` 135 |
 | P2 | 498 | `read` 148 · `bash` 128 · `edit` 77 · `eval` 53 · `grep` 41 · `hub` 30 |
-| P3 | 4,416 | `bash` 2,370 · `read` 944 · `eval` 476 · `edit` 367 · `grep` 129 · `write` 59 |
-| **合计** | **13,506** | `bash` 5,210 · `read` 3,535 · `edit` 1,432 · `eval` 989 · `grep` 865 · `web_search` 341 |
+| P3 | 7,864 | `bash` 3,114 · `read` 2,961 · `eval` 616 · `edit` 456 · `grep` 397 · `write` 116 |
+| **合计** | **16,954** | `bash` 5,954 · `read` 5,552 · `edit` 1,521 · `grep` 1,133 · `eval` 1,129 · `web_search` 408 |
 
 ### 逐日 daily
 
@@ -85,7 +85,7 @@ exact total by ±0.01 h. The exact unrounded total is stated in the generated bl
 | 09-09 | P1 | 10.37 | 3,139 | 19,372,666 | 2,237,328 | 559,675,840 | 15.1942 |
 | 09-10 | P2 | 1.95 | 403 | 3,939,204 | 282,388 | 69,796,864 | 2.1356 |
 | 09-12 | P3 | 3.21 | 2,418 | 11,825,374 | 1,602,010 | 186,828,160 | 0.0000 |
-| 09-13 | P3 | 1.62 | 681 | 3,499,969 | 840,178 | 51,196,928 | 0.0000 |
+| 09-13 | P3 | 4.12 | 2,336 | 21,813,913 | 2,626,719 | 173,524,736 | 0.0000 |
 
 ### 人时 person-hours
 
@@ -96,19 +96,19 @@ Union of all activity windows across the transcripts: timestamps sorted, a gap *
 | P0 | 19.70 | 17 |
 | P1 | 10.37 | 2 |
 | P2 | 1.95 | 1 |
-| P3 | 4.83 | 2 |
-| **合计** | **36.85** | **22** |
+| P3 | 7.33 | 3 |
+| **合计** | **39.34** | **23** |
 
-Exact unrounded total: **36.8452 h**. Raw wall-clock span 08-30 07:12 → 09-13 07:00 UTC ≈ 336 h — **not** the number; it includes sleep, class, and other work.
+Exact unrounded total: **39.3399 h**. Raw wall-clock span 08-30 07:12 → 09-13 15:37 UTC ≈ 344 h — **not** the number; it includes sleep, class, and other work.
 
 ### 会话 session metrics
 
 | Metric | Value | Rule |
 |---|---|---|
-| Sessions | **16** | top-level transcripts under `~/.omp/agent/sessions/-Code-disk_janitor/` |
-| Subagent transcripts | 132 | nested session files (parallel fan-out) |
-| API calls | **11,043** | billable assistant round-trips |
-| 人时 | **36.85 h** | union of activity windows, 22 segments |
+| Sessions | **17** | top-level transcripts under `~/.omp/agent/sessions/-Code-disk_janitor/` |
+| Subagent transcripts | 145 | nested session files (parallel fan-out) |
+| API calls | **12,698** | billable assistant round-trips |
+| 人时 | **39.34 h** | union of activity windows, 23 segments |
 | Elapsed | **15 days** | 08-30 → 09-13 inclusive |
 
 <!-- END GENERATED:expense -->
