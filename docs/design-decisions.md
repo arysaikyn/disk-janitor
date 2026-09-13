@@ -315,6 +315,27 @@ lives in ADR-18.
 > `tauri::ipc::Channel`. Kept as the record of the shelved TUI path and as the pinning rule if
 > it is ever revived.
 
+**Live topology (2026-09-13 — what actually ships).** The event model survived the pivot; the
+terminal plumbing did not. Concretely:
+
+- **Consumer:** the Tauri main process + Svelte webview (SPEC Part B §2.1). There is no UI
+  thread owning `Terminal + AppState` and no `select!` — the webview has its own redraw
+  scheduler and fan-in is `tauri::ipc::Channel<T>` (`ScanProgress`, `ExecProgress`,
+  `AgentProgressMsg`).
+- **No input thread and no tick thread.** Input arrives as `#[tauri::command]` invocations;
+  progress cadence comes from the scan/exec emitters, not a 100 ms `AtomicBool` flip. The
+  `Arc<AtomicBool>` cancel flag endures, now written by the `cancel_scan`/`cancel_agent`
+  commands and polled by the walker (same `Arc`, `src-tauri/src/commands.rs`).
+- **Core threads unchanged:** Scan (`scan::start → JoinHandle<ScanTotals>`, drop = cancel +
+  join), the dua-core walker pool, Exec (sequential, `Sender<ExecEvent>`), Agent (own tokio rt).
+  Classify is single-threaded and inline in the consumer drain loop — it was never a thread,
+  and the TUI-era `cand_rx(1000)` channel does not exist.
+- **What survived verbatim:** the `bounded(100)` scan-event cap, the no-tokio-outside-the-agent
+  rule, workers-own-no-widgets discipline (now: workers never touch UI state), the D-15
+  abort-and-keep-results cancel semantics, and `ratatui::restore()`'s replacement concern —
+  every exit path still flushes WAL/ledger first (R4).
+- **indicatif:** still CLI-only (ADR-14); the CLI prints plain lines and never declared it.
+
 ## ADR-6: Agent-loop HTTP stack — async-openai 0.41.3 (rustls TLS via its own reqwest), sans-IO loop
 
 **Status:** upheld — Arys, 2026-08-30 (provider matrix: DeepSeek primary; others best-effort).

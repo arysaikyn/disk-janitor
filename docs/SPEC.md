@@ -364,68 +364,81 @@ JSONL ledger, and an optional LLM that compiles intent into policy and never see
 ## 2. System architecture
 
 ```
-                 +------------------------------------------------------------+
-                 |                 disk-janitor (one process)                 |
-                 |                                                            |
- keyboard ---> [Input thread] --input_rx(32)---------------------------+     |
-                 |                                                     |     |
-                 |   scan_rx(100)                     +----------------v---+ |
- [Scan thread] --+----------------------------------->|     UI thread      | |
-   owns dua-core |   cand_rx(1000)                    | Terminal + AppState| |
-   RootWalk iter +----------------------------------->| select! -> draw    | |
-   (drop=cancel) |   exec_rx(16)                      +--------------------+ |
-                 +----------------------------------->    ^         ^  ^     |
-                 |   agent_rx (turns, receipts, trajectory)  |         |       |
- [Exec thread] --+-------------------------------------------+         |       |
-   apply/purge/  |                                                     |       |
-   restore       |                                    [Agent thread] --+       |
-                 |                                     own tokio rt;          |
- [Tick thread] --+-- tick_rx(1) 100 ms AtomicBool flip  async-openai;         |
-                 |                                      sans-IO AgentRun;     |
-                 |                                      tools call local      |
-                 |                                      scan/classify/plan/   |
-                 |                                      execute in-process    |
-                 |                                                            |
-                 |  [Walker pool] dua-core work-steal, n=available_parallelism|
-                 |    spawned by Scan thread; DirStat batches -> scan_rx      |
-                 |                                                            |
-                 |  Durable state (files, not threads):                       |
-                 |    ~/.disk-janitor/{ledger.jsonl, wal.jsonl}  (flock)      |
-                 |    <vol>/.Trash-janitor/<op>/ + per-volume WAL             |
-                 |    plan-<ts>.json manifest                                 |
-                 +------------------------------------------------------------+
+   +--------------------------------------------------------------------------+
+   |  disk-janitor-gui (Tauri main process)                                    |
+   |                                                                           |
+   |  +---------------------------------------------------------------------+  |
+   |  | Svelte 5 webview  (SPEC Part C)                                     |  |
+   |  |   Scan / Plan-review / Ledger / Agent screens; local UI state only  |  |
+   |  +-----------------------------^---------------------------------------+  |
+   |        ipc::Channel<T> progress|  |  #[tauri::command] invoke (17 cmds)   |
+   |        ScanProgress / ExecProgress| AgentProgressMsg                     |
+   |  +-----------------------------+---------------------------------------+  |
+   |  | Tauri command layer (src-tauri/src/commands.rs)                     |  |
+   |  |   drain loops: classify::candidates_from_batch() inline,            |  |
+   |  |   single-threaded -- NOT a thread                                   |  |
+   |  +-----+----------------------------------+--------------------+---------+  |
+   |        | scan::start(opts, tx, cancel,    | execute::open(...). |  run_   |  |
+   |        |             stats)               | apply/purge/       |  agent  |  |
+   |        |   -> JoinHandle<ScanTotals>      | restore(tx)        |         |  |
+   |        v                                  v                    v         |  |
+   |  [Scan thread]                 [Exec thread]        [Agent thread]        |  |
+   |    owns dua-core RootWalk        strictly           own tokio rt;         |  |
+   |    iterator; drop = cancel       sequential,        async-openai;         |  |
+   |    + join workers                WAL-ordered        sans-IO AgentRun;     |  |
+   |        |                                             tools call local     |  |
+   |        |                                             scan/classify/plan/  |  |
+   |        |                                             execute in-process   |  |
+   |  [Walker pool] dua-core work-steal, n=available_parallelism()             |  |
+   |    internal to the Scan thread; DirStat batches -> Sender<ScanEvent>      |  |
+   |                                                                           |  |
+   |  Durable state (files, not threads):                                      |  |
+   |    ~/.disk-janitor/{ledger.jsonl, wal.jsonl}  (File::try_lock)            |  |
+   |    <vol>/.Trash-janitor/<op>/ + per-volume WAL                            |  |
+   |    plan-<ts>.json manifest                                                |  |
+   +--------------------------------------------------------------------------+
+   +--------------------------------------------------------------------------+
+   |  janitor (headless CLI bin -- same core lib, no webview)                  |
+   |    scan | plan | apply | purge | restore | recover | agent                |
+   +--------------------------------------------------------------------------+
 ```
 
 ### 2.1 Thread model
 
+The GUI is a Tauri 2 app: the main process owns the webview and the command layer; the headless
+CLI (`janitor`) links the same core library and skips the webview entirely. Both drive one core.
+
 | Thread | Owns | Emits | Consumes | Notes |
 |---|---|---|---|---|
-| Input | `crossterm::event::read()` loop | `input_rx` | — | bounded(32); dua's exact pattern [06 §5] |
-| UI | `Terminal<CrosstermBackend>`, `AppState` | `cmd_tx`, draws | all `*_rx` | redraw per event (diffs are cheap) + 100 ms tick during long tasks; ncdu/gdu cadence [06 §5] |
-| Scan | dua-core `RootWalk`, dataless I/O policy | `scan_rx` | cancel flag | dropping the iterator cancels + joins workers [04 §dua] |
-| Walker pool | (dua-core internal) | → Scan thread | — | work-stealing, `available_parallelism()` threads [04 §stack] |
-| Classify | (single-threaded) | `cand_rx` | `scan_rx`, cancel | evidence IO per candidate; no shared maps, channel boundary [04 §6] |
-| Exec | WAL fd, ledger store, quarantine dirs | `exec_rx` | plan, cancel | strictly sequential, WAL-ordered; polls cancel between entries |
-| Agent | own tokio rt, `ChatClient` | `agent_rx` | `cmd_tx`, tools | sans-IO `AgentRun` stepped on this thread [07 §rig] |
-| Tick | `AtomicBool` | `tick_rx` | — | flips every 100 ms (dua `Throttle`) [04 §progress] |
+| Tauri main + webview | Svelte 5 UI state, `tauri::ipc::Channel<T>` senders | `invoke` commands, progress `Channel<T>` | `ScanProgress` / `ExecProgress` / `AgentProgressMsg` | event consumer; redraw is the webview's own scheduler — there is no UI thread doing `terminal.draw` [ADR-5/18] |
+| Scan | dua-core `RootWalk`, dataless I/O policy | `Sender<ScanEvent>` | cancel flag | `scan::start(...) -> JoinHandle<ScanTotals>`; dropping the iterator cancels + joins workers [04 §dua] |
+| Walker pool | (dua-core internal) | → Scan thread | — | work-stealing, `available_parallelism()` threads, spawned by the Scan thread [04 §stack] |
+| Classify | (no thread) | cand/plan artifacts | `ScanEvent` batches | **single-threaded and inline in the consumer drain loop** — `classify::candidates_from_batch(batches, &th)` runs on the Tauri command's thread (CLI: `main::run_scan`) [04 §6] |
+| Exec | WAL fd, ledger store, quarantine dirs | `Sender<ExecEvent>` | plan, cancel | strictly sequential, WAL-ordered; `execute::apply(tx, …)` / `purge(typed_bytes, tx)` / `restore(op_id, tx)`; polls cancel between entries |
+| Agent | `AgentRun` state + `HttpChatClient` (which owns the tokio rt) | `AgentProgressMsg` | the prompt, cancel flag, tool results | sans-IO `AgentRun::step(&client)` looped inside `spawn_blocking`; the client `block_on`s each model call on its own runtime, so tokio is confined here [07 §rig] |
 
-No tokio outside the agent thread — dua and gitui stay on threads + crossbeam, and ratatui's FAQ
-agrees async only pays off with many concurrent tasks [06 §5].
+No tokio outside the agent thread — scan (dua-core) and exec stay on OS threads over
+crossbeam-channel [06 §5].
 
 ### 2.2 Channel topology
 
-| Channel | Kind (crossbeam-channel) | Bound | Backpressure / drop policy |
+Two layers of channels. **Core → core** are crossbeam-channel, used by both the CLI and the GUI.
+**Core → webview** are Tauri `ipc::Channel<T>`, which carry progress across the process's own
+IPC boundary; they exist only in the GUI.
+
+| Channel | Kind | Bound | Backpressure / drop policy |
 |---|---|---|---|
-| `input_rx` | `crossterm Event` | 32 | `try_send`; drop key-repeat spam on Full (dua accepts Full drops) [06 risks] |
-| `scan_rx` | `ScanEvent` (batched `DirStat`s) | 100 | dua's cap; scanner blocks, UI drains `try_recv` [04 §progress] |
-| `cand_rx` | `Candidate` | 1000 | classify blocks |
-| `exec_rx` | `ExecEvent` | 16 | exec blocks (user-visible ops are slow anyway) |
-| `agent_rx` | `AgentEvent` | unbounded (low rate) | turns are seconds apart |
-| `tick_rx` | `()` | 1 | `try_send`, latest-wins |
-| `cmd_tx` (UI →) | `UiCmd` | 8 | blocking send — user intent is never dropped |
+| `tx: Sender<ScanEvent>` | crossbeam (`scan::start`) | 100 | scanner blocks when the consumer falls behind (`src/main.rs`, `src-tauri/src/commands.rs`) |
+| `tx: Sender<ExecEvent>` | crossbeam (`execute::apply` / `purge` / `restore`) | unbounded | exec is sequential and user-visible ops are slow anyway |
+| `Channel<ScanProgress>` | `tauri::ipc::Channel` | — | webview boundary: the drain loop forwards each `ScanEvent` as a typed progress message |
+| `Channel<ExecProgress>` | `tauri::ipc::Channel` | — | webview boundary: per-entry apply/purge/restore progress |
+| `Channel<AgentProgressMsg>` | `tauri::ipc::Channel` | — | webview boundary: agent turns, tool receipts, trajectory |
+
+`ScanEvent` is `Batch(Vec<DirStat>) | RootError { root, err } | Finished(ScanTotals)`; the
+consumer drains it in a `for event in rx` loop and feeds batches to classify inline.
 
 Shared state: `Arc<AtomicBool>` cancel (checked per directory / candidate / plan entry) and
-`Arc<ScanStats>` atomics (entries, bytes, elapsed) for the footer. Nothing else — no
+`Arc<ScanStats>` atomics (`entries`, `bytes`, `started`) for the footer. Nothing else — no
 `DashMap`, no cross-thread locks [04 §6].
 
 ### 2.3 Process-level invariants
@@ -435,8 +448,9 @@ Shared state: `Arc<AtomicBool>` cancel (checked per directory / candidate / plan
   `EDEADLK` — fine, scan is metadata-only [05 §5][04 risks].
 - `flock(LOCK_EX | LOCK_NB)` on `~/.disk-janitor/janitor.lock` — a second instance fails fast
   with a clear message [08 §6].
-- Async confined to the agent thread; UI, scan, classify, exec are plain threads over
-  crossbeam channels [06 §5].
+- Async confined to the agent thread; scan and exec are plain OS threads over crossbeam
+  channels, classify is single-threaded inline in the consumer, and the Tauri webview is
+  the GUI consumer [06 §5].
 
 ### 2.4 Crates by layer
 
@@ -709,7 +723,7 @@ network; matches the WAL/crash-recovery ethos [07 §rig]):
 
 | Step | Meaning |
 |---|---|
-| `CallModel{turn, history}` | one `create_chat_completion` (stream:false — stream only the TUI text display [07 risks]); pre-check ctx fit with the chars/4 estimate (no tokenizer dep — see §2.4) [07 §context] |
+| `CallModel{turn, history}` | one `create_chat_completion` (stream:false — the agent loop consumes whole turns; the GUI renders progress from the trajectory, not from token deltas [07 risks]); pre-check ctx fit with the chars/4 estimate (no tokenizer dep — see §2.4) [07 §context] |
 | `CallTools{calls}` | validate the `arguments` JSON strings (repair/skip/fail hooks; `tool_retry_limit=3` hashed per name+args) [07 §wire][07 risks] |
 | `Done{reason}` | `StopReason::{ModelStop, RequestedByTool, MaxTurns, TokenBudget, CostBudget, UserCancel, ToolFailLoop, ContextCap}` [07 §budget] |
 
@@ -753,7 +767,8 @@ Session save/load (R5 half): `RunSnapshot` persists as `~/.local/state/disk-jani
 (`dirs::state_dir()`), atomic write via tempfile + fsync (same protocol as WAL, no rename-under-lock
 hazards — sessions are per-run, no cross-process contention). Ledger gains a `Session` record kind
 referencing `<run_id>` + byte offset into the run's trajectory so the ledger trajectory screen can
-reload a past run; `janitor agent --resume <run_id>` (CLI) and the trajectory screen's `R` key (TUI)
+reload a past run; `janitor agent --resume <run_id>` (CLI) and the GUI Agent panel's trajectory
+history (SPEC Part C §3.9)
 call `RunSnapshot::load()` and continue `next_step()` from the restored `RunState` [R5; 08 §5].
 
 Crates: async-openai 0.41.3 (typed types, `with_api_base` for DeepSeek/OpenRouter/Ollama/vLLM,
@@ -783,17 +798,33 @@ Responsibility: `config.toml` (R3) + env overrides + GUI settings sheet (SPEC Pa
 secrets never logged.
 
 ```rust
-pub struct Config {
-  pub endpoint: Url, pub api_key: SecretString, pub model: String,
-  pub ctx_len: u32, pub thinking: ThinkingMode,            // R3 fields [SPEC Part A §5]
-  pub prices: Vec<ModelPrice>,                             // per 1M: prompt_miss, prompt_hit, completion [07 §cost]
-  pub budget: Budget { cost_usd, max_turns, tokens },      // R6 interrupt
-  pub thresholds: Thresholds { hot_mtime: 10 min, grace_hours: 72, min_candidate_bytes, ancestor_depth },
-  pub ui: UiConfig { tick_ms: 100, scan_channel_bound: 100 },
+pub struct Config {                                        // src/config.rs
+  pub endpoint: String,                                    // default "https://api.deepseek.com/v1"
+  pub api_key: Option<String>,                             // #[serde(skip_serializing)] — never written back out
+  pub model: String,                                       // default "deepseek-chat"
+  pub ctx_len: u32,                                        // default 65_536  [R3]
+  pub thinking: bool,                                      // default false   [R3]
+  pub prices: Vec<ModelPrice>,                             // per-1M rows, model-keyed [07 §cost]
+  pub budget: Budget,                                      // [R6] interrupt
 }
-pub fn load() -> Result<Config>; // dirs::config_dir()/disk-janitor/config.toml -> env overrides
-pub fn redact(&self) -> String;  // safe debug/log form
+pub struct ModelPrice { model, prompt_miss_per_1m, prompt_hit_per_1m, completion_per_1m }  // f64
+pub struct Budget { cost_usd: f64 /*1.0*/, max_turns: u32 /*12*/, tokens: u64 /*200_000*/ }
+pub fn load() -> Result<Config, ConfigError>;              // <config_dir>/disk-janitor/config.toml -> env overrides
+pub fn redact(&self) -> String;                            // safe log form: key renders "***" or "none"
 ```
+
+Every field carries `#[serde(default)]`, so a **partial** `config.toml` merges over
+`Config::default()` instead of hard-erroring on a missing field (E1). Env overrides on top:
+`DISK_JANITOR_{ENDPOINT,API_KEY,MODEL,BUDGET_USD}`; `load()` strips a trailing `/` from the
+endpoint (E2 — async-openai appends `/chat/completions` unconditionally). `Debug` is a manual
+impl that never prints the key (E3).
+
+Two related types are **not** held in `Config`:
+- `Thresholds { hot_mtime, ancestor_depth, min_bytes }` (`src/lib.rs`) is constructed at the call
+  site — `main.rs::run_scan` builds it from CLI flags.
+- `PolicyConstraintsShape { target_bytes, min_bytes, allow_grades, deny_globs, deny_under_mta_secs,
+  allow_network_regen, allow_prune_commands, grace_hours, max_entries }` (`src/plan.rs`) is the
+  compiled-policy shape; `grace_hours` default 72 mirrors `execute::GRACE_HOURS`.
 
 Crates: serde, toml, dirs. API keys use a manual `impl Debug` redaction (no `secrecy`
 dependency — see §2.4). The DeepSeek peak/off-peak hit/miss pricing split [07 §cost]
@@ -898,10 +929,10 @@ User request, typed in the GUI agent panel (SPEC Part C §3.9): **"腾出 25 GB�
 | # | Stage | What happens | Artifacts |
 |---|---|---|---|
 | 1 | policy | NL compiler matches local rules: `target_bytes=25 GiB`, `deny_under_mta=14 d`, `allow {PureCache, RebuildableFromSource, Redownloadable}`; no LLM call needed (rules fully cover the intent) | `CompiledPolicy` in memory |
-| 2 | scan | volume info read (free_important vs raw, labeled [02 §3]); dua-core walk of `~` with materialization OFF; `DirStat` batches stream over `scan_rx`; footer = atomic snapshot. Finds: `node_modules` A 2.1 GiB, `node_modules` B 0.9 GiB, `DerivedData` 6.8 GiB, `~/.npm/_cacache` 3.2 GiB, `Docker.raw` (apparent 64 GiB / allocated 11 GiB), pnpm store (hardlinked into several projects) | `ScanTotals`; `scan_result` ledger rec |
+| 2 | scan | volume info read (free_important vs raw, labeled [02 §3]); dua-core walk of `~` with materialization OFF; `DirStat` batches stream over `Sender<ScanEvent>`; footer = atomic snapshot. Finds: `node_modules` A 2.1 GiB, `node_modules` B 0.9 GiB, `DerivedData` 6.8 GiB, `~/.npm/_cacache` 3.2 GiB, `Docker.raw` (apparent 64 GiB / allocated 11 GiB), pnpm store (hardlinked into several projects) | `ScanTotals`; `scan_result` ledger rec |
 | 3 | classify | ancestor probes: **A** — `package-lock.json` newer than dir ⇒ `RebuildableFromSource`, regen `npm ci` ≈ 40 s [03 §1]; **B** — no `package.json` in any ancestor ⇒ orphan ⇒ prompt-only [03 §0]; **DerivedData** — sibling project dirs + `IDECustomDerivedDataLocation` resolved [03 §4] ⇒ `RebuildableFromSource`; **_cacache** — hash-named children ⇒ `PureCache` CAS, whole-store action only [03 §1]; **Docker.raw** — sparse (apparent ≫ allocated) ⇒ `HandsOff` as a file + `PruneCommand docker system prune` [03 §6]; pnpm store ⇒ `nlink>1` discount; `.git/HEAD` mtimes feed `deny_under_mta` | `Candidate` stream; `verdict` recs (`path_hash` only) |
 | 4 | plan | `build()`: 11 `Quarantine` entries (5.4 GiB) — A, DerivedData, `_cacache` whole-store (the mtime-hot rule is waived for whole-store actions [03 risks #7]); 2 `PruneCommand` (`docker system prune`, `brew cleanup --prune=90d` 0.4 GiB); 3 `Refuse` (node_modules B orphan ×1, `MtimeHot` ×2); Docker.raw excluded (sparse honesty: 11 GiB allocated, not 64 GiB apparent). Totals hardlink-discounted. `write_manifest` → `plan-20260830-1432.json` | manifest JSON; `plan` ledger rec |
-| 5 | apply | confirm in GUI (plan-review screen, UX-SPEC Part A §3.5) → Exec thread, per entry: WAL intent `{op, entry, undo{original_path, grace_expires_at=+72 h}}` → `sync_data` (`F_FULLFSYNC` on Apple [08 §2]) → `renamex_np(RENAME_EXCL\|RENAME_NOFOLLOW_ANY)` into `<vol>/.Trash-janitor/w-0042/` → WAL result → parent-dir sync at the op boundary. **Zero bytes freed.** Ctrl-C mid-apply cancels between entries (WAL stays consistent); flock keeps a second instance out | `apply` recs; `ExecEvent`s |
+| 5 | apply | confirm in GUI (plan-review screen, UX-SPEC Part A §3.5) → Exec, per entry: WAL intent `{op, entry, undo{original_path, grace_expires_at=+72 h}}` → `sync_data` (`F_FULLFSYNC` on Apple [08 §2]) → `renamex_np(RENAME_EXCL\|RENAME_NOFOLLOW_ANY)` into `<vol>/.Trash-janitor/w-0042/` → WAL result → parent-dir sync at the op boundary. **Zero bytes freed.** Cancel mid-apply stops between entries (WAL stays consistent); the ledger lock keeps a second instance out | `apply` recs; `ExecEvent`s |
 | 6 | purge | review shows "5.4 GiB quarantined — purge frees 5.4 GiB"; user types `5841673728` (exact allocated); mismatch refuses. Per-entry recursive unlink; `bytes_freed` echoed into the WAL; freed report notes TM-snapshot pinning if snapshots exist [02 §3] | `purge` recs |
 | 7 | restore (next morning) | a project won't build ⇒ `restore w-0042` (or the Ledger screen's one-click Restore, UX-SPEC Part A §3.7): reverse renames from the WAL `(original, quarantine)` pairs for entries not yet purged; `undoes` seq recorded; within the 72 h grace; the quarantine op dir is removed when empty | `restore` recs |
 | 8 | agent overlay (same data) | user asks the agent "what's safe?": it calls `candidates` ⇒ sees only `C-001…` `{bytes, grade, evidence_summary}`; calls `build_plan`; calls `record_verdict`. It never sees a path (chokepoint + CI leak test); cost accrues per call; `Budget` interrupt fires at the cap | `budget` recs |
@@ -1187,9 +1218,9 @@ Dependency notes:
 | agent | 0xPlaygrounds/rig | sans-IO `AgentRun` state machine; `Tool`/`ToolDefinition`; `max_turns` budget ・ `ToolErrorKind` + the `kind_defaults!` one-table macro; the redaction-boundary negative-test shape (register a redactor, then an observer) | MIT [07 §rig][29 §1][29 §2] | **design reference only — not a dependency**. Our redaction boundary is a structural invariant at `src/agent.rs::serialize_tool_result()` (`src/agent.rs:1186`) |
 | agent | bosun-ai/swiftide | `StopReason` enum + control tools (`Stop`→`record_verdict`); `tool_retry_limit` hashed per call ・ `ScopedExecutor<E>::apply_scope` as a single rewriting chokepoint; `CharEstimator` | MIT [07 §rig][29 §7][29 §8][29 §9] | **design reference only — not a dependency** |
 | agent | 64bit/async-openai + openai/openai-node | typed chat-completions; `finish_reason` union; `include_usage` semantics | MIT / Apache-2.0 [07] | |
-| ui | Byron/dua-cli TUI | event-loop skeleton; name-keyed selection restore; `ctrl+c` keymap | MIT [06 §rec] | |
-| ui | gitui-org/gitui | multi-source `select!` loop; `any_work_pending()` gating | MIT [06 §rec] | |
-| ui | gdu / yorhel/ncdu | SIGINT→synthetic key; rate-limited redraw; abort-and-keep-results | MIT [06 §rec] | |
+| ui | Byron/dua-cli TUI | the *idea* of a resumable UI context — survived the pivot as localStorage-persisted `last-scan-path` / `last-plan-id` (`app/src/routes/{Scan,Review,PlanReview}.svelte`), not dua's name-keyed row restore; cancel surfaces as the shared `Arc<AtomicBool>` + `cancel_scan` command, not a `ctrl+c` keymap | MIT [06 §rec] | TUI event-loop skeleton itself is **shelved** (ADR-5/18) |
+| ui | gitui-org/gitui | multi-source `select!` loop; `any_work_pending()` gating | MIT [06 §rec] | **shelved with the TUI** — no `select!` in the tree; the GUI's fan-in is `ipc::Channel<T>` |
+| ui | gdu / yorhel/ncdu | abort-and-keep-results survived as D-15 (cancel drops incomplete batches, keeps completed classifications); SIGINT→synthetic key and rate-limited redraw are **TUI-only** and shelved — the webview redraws on its own scheduler | MIT [06 §rec] | |
 | config | dua/gdu config patterns; async-openai `OpenAIConfig` | config shape; `with_api_base` | MIT [07] | |
 | scan | pdu (KSXGitHub/parallel-disk-usage); `BurntSushi/ignore` | per-root device resolution — `DeviceBoundary`/`root_dev` (pdu) and a cached per-root `root_device` + `continue` on resolution failure (ignore) — instead of a single first-root device | Apache-2.0 / Unlicense OR MIT [26 §2] | `ignore` is not recommended as a walker (its gitignore semantics are unwanted on candidate discovery) — cited for the per-root device idea only, which note 26 attributes to it and to walkdir's cached `root_device`; jwalk carries no device option at all. This is the same defect class as fix #3b, reached independently; our fix resolves the device per root |
 | scan | pdu (KSXGitHub/parallel-disk-usage) | typed error operation tags `Operation::{SymlinkMetadata, ReadDirectory, AccessEntry}` + a no-op `ErrorReport::SILENT` | Apache-2.0 [26 §3] | turns `ScanEvent::RootError { err: String }` into countable failure classes |
@@ -1235,7 +1266,8 @@ Dependency notes:
 
 | Repo | License | Posture |
 |---|---|---|
-| **Shipped multi-license set:** dua-cli/dua-core, kondo, cargo-sweep, cargo-cache, npkill, gdu, ncdu, gitui, async-openai, tempfile, crc32fast, libc, xattr, sysinfo, serde*, globset, crossbeam, fs-err, clap, toml, chrono, uuid, dirs, thiserror, anyhow, tokio | MIT / Apache-2.0 / Unlicense / PD | vendoring & borrowing safe — verify each per-file at adoption |
+| **Shipped dependency set** (everything actually in `Cargo.toml`): dua-core, globset, crossbeam-channel, sysinfo, libc, tempfile, crc32fast, fs-err, serde + serde_json, toml, thiserror, anyhow, clap, chrono, uuid, dirs, xattr (`cfg(unix)`), tokio + async-openai (optional, `llm` feature) | MIT / Apache-2.0 / Unlicense / PD | vendoring & borrowing safe — verify each per-file at adoption |
+| **Design-reference set (NOT dependencies)**: dua-cli (the CLI product; only `dua-core` is shipped), kondo, cargo-sweep, cargo-cache, npkill, gdu, ncdu, gitui | MIT / Apache-2.0 / Unlicense / PD | read for ideas only — none appear in `Cargo.toml`; their borrow rows are in §9 above |
 | **Surveyed but NOT shipped** (design references, or dropped in the 2026-09-12 audit): rig, swiftide, fs4, nix, rustix, walkdir, ignore, rayon, tiktoken-rs, same-file, secrecy, backon, cargo_metadata, reqwest, czkawka_core/krokiet, phpfc/cleanser, parallel-disk-usage, du-dust, diskus, jwalk, tauri-specta/specta/typeshare/ts-rs, inquire/dialoguer, proptest family / `fail` / `assert_cmd` / `quickcheck` / `libfuzzer-sys`, redb/sled/jammdb/sanakirja/wal/wal-rs/okaywal/LMDB, borgbackup/restic/rclone/git-annex/trash-rs/gtrash/rmw/rmlint/jdupes/fdupes/fclones/dupeGuru/BleachBit/coreutils/glib, Homebrew/Nix/Docker-cli, node-prune/pip/fastlane/dev-cleaner, humantime/parse-size/bytesize/byte-unit/humansize, Cedar/OPA/sqlparser/casbin-rs/koto/pomsky/starlark-rust/rhai/PostgreSQL/Kubernetes-apimachinery, genai/candle/rmcp/ollama-rs/llm-chain/kalosm/mistral.rs, tigerbeetle, libfiu, W3C ARIA APG, Docker/Kubernetes/Microsoft/Apple/GNOME/Material docs, dohooo/helmor, Ne-IA/convertia, lanyeeee/bilibili-video-downloader, basharovV/musicat | MIT / Apache-2.0 / Unlicense (the entries after `reqwest` are licence-heterogeneous — see the note cell) | no code imported — see §1 banner and Part D §2.4. Dropped from `Cargo.toml`; `reqwest`/`secrecy`/`walkdir`/`same-file`/`rustix` persist in `Cargo.lock` as async-openai transitives, and `cargo_metadata` in `src-tauri/Cargo.lock` via `tauri-utils` (⊘ ≠ absent from the lock); entries listed after `reqwest` are licence-heterogeneous — GPL-3.0, LGPL-2.1, AGPL-3+, BOLA v1.1, CC-BY-SA 4.0, BUSL-1.1 and one NOASSERTION — each §9 row states its own licence |
 | Pearcleaner | Apache-2.0 + Commons Clause v1.0 | read for behavior; do not vendor into a product [02 §rec] |
 | GrandPerspective, git, tw93/Mole | GPL-2.0 / GPL-3.0 | read as design reference only — never import code [02 §rec][03 §rec] |
@@ -1982,7 +2014,7 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 | globset | 0.4.20 (2026-08-04) [04] | Unlicense OR MIT [04] | fast glob-set matching for policy deny-globs (classify/policy) [04] | — | classify, policy | — |
 | ⊘ walkdir | 2.5.0 [04] | Unlicense/MIT [04] | **NOT ADOPTED** — serial ordered traversal; research record only [04][05] | — | — (none) | fs + recursion [05] |
 | ⊘ jwalk | 0.9.0 (2026-08-05) [04] | MIT [04] | **NOT ADOPTED** — REJECTED: README "Unmaintained … use dua-core"; no device check in source, no gitignore, `skip_hidden` on by default [04] | — | — (none) | dua-core [04] |
-| crossbeam-channel | 0.5.16 [04] | MIT OR Apache-2.0 [04] | scan→ui event channel + `select!` loop; the dua/gdu progress backbone [04][06] | — | scan, ui | std mpsc (no select) [06]; tokio mpsc (drags tokio in for no benefit) [06] |
+| crossbeam-channel | 0.5.16 [04] | MIT OR Apache-2.0 [04] | the scan→classify→exec event backbone: `Sender<ScanEvent>` (bounded 100) and `Sender<ExecEvent>`, drained by the CLI or the Tauri command layer [04][06] | — | scan, execute, ui | std mpsc (no `select!`, no bounded try_send) [06]; tokio mpsc (drags tokio into the default headless build for no benefit) [06] |
 | ⊘ num_cpus | 1.17.0 [04] | MIT OR Apache-2.0 [04] | **NOT ADOPTED** — worker count for dua-core `threads`; never declared. `std::thread::available_parallelism` covers it [04] | — | — (none) | std [04] |
 | sysinfo | 0.39.6 [04] | MIT [04] | volume list, capacity, removable/read-only flags (`Disks::new_with_refreshed_list`, `DiskRefreshKind` to trim cost) [04] | — | scan, ui | libc `statfs` manual [04] |
 | ⊘ rayon | 1.12.0 [04] | MIT OR Apache-2.0 [04] | **NOT ADOPTED** — parallel map for CPU-bound classify; classify ships single-threaded [04] | — | — (none) | std threads + channel [04] |
@@ -2003,7 +2035,7 @@ Owning modules (SPEC layout): scan / classify / plan / execute / ledger / policy
 | fs-err | 3.3.1 (2026-07-03) [04][08] | MIT OR Apache-2.0 [04][08] | drop-in `std::fs` with op + path in error messages — for ledger/WAL/manifest IO, NOT the hot walk path [04][08] | optional `tokio`/`path_facts` features [04] | ledger, execute, config | manual `map_err` [04] |
 | trash | 5.2.6 [05] | MIT [05] | NOT for quarantine moves (Finder-Trash semantics, not our WAL); optional interop to show where Apple trash lives [05] | — | execute (optional) | none (skip) [05] |
 
-### 1c. TUI stack (feature `tui`)
+### 1c. TUI stack — **SHELVED** (historical record, never declared as dependencies)
 
 | Crate | Ver (2026-08) | License | Purpose / verdict | Feature flags | Module | Alternatives | Notes |
 |---|---|---|---|---|---|---|---|
@@ -2226,10 +2258,12 @@ the shelved crates were never declared, so the feature list is now exactly the o
   async-openai's built-in retry layer handles 429/5xx + `Retry-After` [07]. SSE crates
   (reqwest-eventsource OR eventsource-stream) stay OUT of the feature until hand-rolling is chosen
   — async-openai already parses streams [07].
-- Both features compose: `tui` + `llm` = the interactive agent UI; the privacy chokepoint (tool
-  serializer) lives in `agent/` regardless of features [07].
-- CI should build `--no-default-features`, default, `--features tui`, `--features llm`, and both,
-  so crossterm/ratatui version drift is caught at the edges [06].
+- The GUI is **not** feature-gated: `src-tauri/` depends on the core lib unconditionally and
+  forwards `llm = ["disk_janitor/llm"]`, so the desktop app always builds the same default core
+  plus the GUI shell. The privacy chokepoint (tool serializer) lives in `agent/` regardless of
+  features [07].
+- CI builds `--no-default-features`, default, `--features llm`, and `src-tauri` (which forwards
+  `llm`) — the TUI matrix row was dropped with the shelved stack [06].
 
 ## 5. Version risk register (churn before 2026-09-08)
 
