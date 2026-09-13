@@ -10,6 +10,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Candidate, EvidenceKind, PlanAction, PlanEntry, Refusal, VolumeInfo};
 
+/// Platform exclusion presets, on by default (SPEC §9 row 29, adopted from czkawka
+/// `DEFAULT_EXCLUDED_ITEMS` [22 §2]). They keep the tool out of other tools' stores:
+/// VCS metadata, dependency trees, OS trash, and the per-user cache root.
+///
+/// Semantics — MEASURED against `globset` 0.4.20, which is what `decide()` compiles
+/// them with. `globset`'s `*` crosses `/`, and `decide()` matches the candidate path
+/// *and every ancestor* (`decide`, §3 policy refusals), so each preset refuses a
+/// store's **descendants** while leaving the **store root itself** eligible:
+///
+/// ```text
+/// /Users/*/code/api/node_modules                 -> allowed   (whole-store candidate)
+/// /Users/*/code/api/node_modules/leftpad/index.js-> DENIED by */node_modules/*
+/// /Users/*/Library/Caches                        -> allowed   (whole-store candidate)
+/// /Users/*/Library/Caches/com.apple.Safari/blob  -> DENIED by /Users/*/Library/Caches/*
+/// ~/.Trash                                       -> allowed   (redownloadable target)
+/// ```
+///
+/// That split is the point: SPEC §4 stages 4–5 quarantine `node_modules`/`_cacache`
+/// as **whole-store** actions, and a preset that refused the root would delete those
+/// from every plan. Only a per-blob walk of a store is suppressed, which is exactly
+/// the behaviour "don't reshape another tool's cache" asks for.
+///
+/// Two presets have narrow reach and are kept for parity with the adopted list
+/// rather than for measured effect: `*/Trash/*` matches a literal `Trash` path
+/// component (it does **not** cover `~/.Trash`, which is a different name — measured),
+/// and `*/lost+found/*` matches a `lost+found` component. `~/.npm/_cacache` is **not**
+/// matched by any preset (it is not under `~/Library/Caches`).
+///
+/// These are defaults in the SPEC §9 sense — the user overrides them by adding to
+/// `deny_globs` (NL 「别动 X」 appends). They are deliberately NOT in
+/// `ScanOptions.ignore`: `ignore` matches `entry.file_name` at walk time both in the
+/// ignore test and before any batch push, so a bare `node_modules` name would prune
+/// the subtree and drop the store candidate AND its bytes from the scan total.
+const DEFAULT_DENY_GLOBS: &[&str] = &[
+    "*/.git/*",
+    "*/node_modules/*",
+    "*/lost+found/*",
+    "*/Trash/*",
+    "*/.Trash-*/*",
+    "/Users/*/Library/Caches/*",
+];
+
 /// Compiled policy constraints — SPEC §6 `PolicyConstraints`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyConstraintsShape {
@@ -34,7 +76,7 @@ impl Default for PolicyConstraintsShape {
                 crate::Grade::RebuildableFromSource,
                 crate::Grade::Redownloadable,
             ],
-            deny_globs: Vec::new(),
+            deny_globs: DEFAULT_DENY_GLOBS.iter().map(|s| s.to_string()).collect(),
             deny_under_mta_secs: 0,
             allow_network_regen: true,
             allow_prune_commands: true,

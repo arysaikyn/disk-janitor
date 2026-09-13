@@ -8,7 +8,7 @@
 > implementation — when code deviates, update the doc (or file an ADR) in the same change.
 
 **Status snapshot (2026-09-08; updated 2026-09-13):** design 100% · implementation M1–M4 done
-(121 tests green; M5 = submission deliverables in progress) ·
+(122 tests green; M5 = submission deliverables in progress) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-31
 confirmed (Round 4 landed 09-01; D-32…D-38 dispositioned 2026-09-10 — recorded in
 `docs/decision-sheet-2026-09-10.md`, not this register) · course deadlines re-verified 09-08 against the official
@@ -305,7 +305,7 @@ amended in the same pass.
 | Research (33 notes) | ✅ done — 01–13 verified at source; 14–20 landed 09-01; 21 landed 09-07 (15/17/19 vendor-URL re-verify queued, note-flagged); 22–33 landed 09-13 (code-level borrow sweep, `## Port backlog` per note) |
 | Architecture (17 ADRs) | ✅ 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) |
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
-| **Implementation** | ✅ **M1–M4 done** — 121 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-13) |
+| **Implementation** | ✅ **M1–M4 done** — 122 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-13) |
 | **09-10 课堂展示** (5 min demo + 2 min Q&A; 25 pts) | ✅ delivered 09-10 — deck committed at `docs/presentation/ai-experience.{html,pdf,png}` (`acd44e3`); competitor/presentation research: note 13 |
 | **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ deadline passed — **status UNKNOWN, not negative.** The vault holds no artifact either way: `night-think/2026-W37.md:20` records the 09-06 公开展示帖 status as UNKNOWN, `:34`/`:101` show zero evidence of a 试用反馈 post through 09-10, and `vault/Courses/Rust/Agent-Project.md:24` carries the 09-06 row with no ✅. Confirm both on the course forum before 9.13; do not record a ✅ the vault does not support |
 
@@ -1241,7 +1241,7 @@ Dependency notes:
 | classify | Nix 2.36.0 (`gc.cc`) | pre-delete re-check *inside* the deletion loop, because state changes between planning and acting | **LGPL-2.1** — design-only, copy nothing verbatim; the idea is implemented independently [27 §1] | the TOCTOU class our `execute` re-probe addresses |
 | classify | dev-cleaner 1.2.0 | capability-probe → **one** refusal, not an error storm (its comment: "Check first, then act") | MIT [27 §11] | we already refuse on capability (`Refusal` variants fed by `VolumeInfo`) |
 | classify | BleachBit 6.0.4 | evidence-vs-action separation encoded in the rule language (`search` × `command`) | GPL-3.0 — read-as-pattern only [27 §6] | we honour this structurally via `EvidenceKind`/`Strength`/`Grade` |
-| classify | czkawka_core | platform exclusion presets (`*/Trash/*`, `*/.Trash-*/*`, `/Users/*/Library/Caches/*`, `*/.git/*`, `*/node_modules/*`) | MIT [22 §2] | deny-glob defaults |
+| classify | czkawka_core | platform exclusion presets (`*/Trash/*`, `*/.Trash-*/*`, `/Users/*/Library/Caches/*`, `*/.git/*`, `*/node_modules/*`) | MIT [22 §2] | **Shipped** — all six czkawka presets seeded in `PolicyConstraintsShape::default()` (`src/plan.rs`), user-overridable via the NL/`deny_globs` path. Semantics measured: a preset denies a store’s *descendants* but leaves the store **root** eligible (so §4’s whole-store `node_modules` / `~/.npm/_cacache` / `~/.Trash` actions survive); pinned by `preset_deny_globs_shield_descendants_not_store_roots`. Kept **out** of `ScanOptions.ignore` — that path prunes subtrees at walk time and would drop the store candidate and its bytes |
 | classify | **BSD `sys/stat.h` constants** | the corrected `UF_*`/`SF_*` values (`UF_DATAVAULT 0x0000_0080`, `SF_RESTRICTED 0x0008_0000`) | **OS ABI facts, not copied code** — read from `$(xcrun --show-sdk-path)/usr/include/sys/stat.h` L310-359 [23 §1][33 §1] | **implemented this turn** (defect #2); pinned to the SDK header by a new test |
 | plan | czkawka_core | versioned, discardable derived cache (`CACHE_VERSION`, memory cap) | MIT [22 §6] | we re-scan from scratch; a version-stamped cache would never be authoritative |
 | plan | pdu | post-hoc hardlink subtraction pass (`size * (links-1)`) instead of an insertion-time veto | Apache-2.0 [26 §4] | the **rejected** alternative to the implemented fix #3a; kept on record because it keeps `fold_subtree` a pure sum |
@@ -2279,7 +2279,7 @@ the shelved crates were never declared, so the feature list is now exactly the o
 
 | Dependency | Risk | Mitigation |
 |---|---|---|
-| dua-core 3.3.0→4.0.0 | 10-day-old standalone crate at first audit (3.3.0, 2026-08-28, ~10k downloads) — most likely to churn | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; **121 tests green by default / 131 with `--features llm`** (counts re-verified 2026-09-13), incl. walker/syscall suites. Fallback = `ignore::WalkParallel` unchanged (pre-planned, not vendored). Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
+| dua-core 3.3.0→4.0.0 | 10-day-old standalone crate at first audit (3.3.0, 2026-08-28, ~10k downloads) — most likely to churn | ~~Pin exact `=3.3.0`~~ **amended 2026-09-10 (owner D-37): bumped to `=4.0.0`** — `Options{skip_metadata}` + `Entry.metadata: Option<_>` API delta adapted same day; **122 tests green by default / 132 with `--features llm`** (counts re-verified 2026-09-13), incl. walker/syscall suites. Fallback = `ignore::WalkParallel` unchanged (pre-planned, not vendored). Audit 4.0.0 macOS unsafe pending (3.3.0 audit carried over) |
 | ratatui 0.30.2 / crossterm 0.29 | **shelved with the GUI pivot (ADR-5/18) — not declared.** Kept as a risk note in case the TUI returns: crossterm 0.30 does not exist yet; when a new major lands, ratatui moves and every direct crossterm use must move in the same commit (separate event queues per major = race/lost-event risk) | If revived, pin `crossterm = "0.29"` next to `ratatui = "0.30"`; check transitive deps in CI [06] |
 | reqwest 0.13.x (**transitive**) | 0.13.0 broke with rustls-default (crypto provider aws-lc-rs); `query`/`form` became opt-in; `json` default-on "verify at build time". Not a direct dep — we inherit async-openai's pin | Pin only via `Cargo.lock`; test base-URL overrides (DeepSeek/OpenRouter/Ollama/vLLM) at build time [07] |
 | async-openai 0.41.3 | fine-grained feature churn (`chat-completion`, `middleware`, `byot`); 0.41.3 released 2026-07-31 | Pin exact; compile only `chat-completion` [07] |

@@ -473,6 +473,24 @@ fn summarize_appends_prune_and_caveat_when_present() {
 
 // --- policy compiler (§3.6) ---------------------------------------------------------
 
+/// The seeded preset deny-globs (SPEC §9 row 29) — written out in full so a change
+/// to the preset list is a deliberate test edit, not a silent behaviour drift.
+/// Order is the declaration order in `plan::DEFAULT_DENY_GLOBS`; `compile()` appends
+/// user globs after these, so unions below keep this prefix.
+fn default_deny_globs() -> Vec<String> {
+    [
+        "*/.git/*",
+        "*/node_modules/*",
+        "*/lost+found/*",
+        "*/Trash/*",
+        "*/.Trash-*/*",
+        "/Users/*/Library/Caches/*",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 fn assert_default_constraints(pc: &PolicyConstraintsShape) {
     assert_eq!(pc.target_bytes, None);
     assert_eq!(pc.min_bytes, 50 * MIB);
@@ -484,7 +502,7 @@ fn assert_default_constraints(pc: &PolicyConstraintsShape) {
             Grade::Redownloadable,
         ]
     );
-    assert!(pc.deny_globs.is_empty());
+    assert_eq!(pc.deny_globs, default_deny_globs());
     assert_eq!(pc.deny_under_mta_secs, 0);
     assert!(pc.allow_network_regen);
     assert!(pc.allow_prune_commands);
@@ -492,7 +510,96 @@ fn assert_default_constraints(pc: &PolicyConstraintsShape) {
     assert_eq!(pc.max_entries, 10_000);
 }
 
-/// (f) 腾出 25 GB + 别动我这两周在跑的项目 → target_bytes + deny_under_mta.
+/// SPEC §9 row 29: the seeded presets refuse a store's *descendants* but leave the
+/// store **root** eligible, so the §4 whole-store actions (`node_modules`,
+/// `~/.npm/_cacache`) and the redownloadable `~/.Trash` target all survive. A preset
+/// that refused the root would silently empty every whole-store plan.
+#[test]
+fn preset_deny_globs_shield_descendants_not_store_roots() {
+    let pc = PolicyConstraintsShape::default();
+    let vols = [vol(1)];
+    let root = cand_at(
+        "C-001",
+        "/Users/x/code/api/node_modules",
+        Grade::RebuildableFromSource,
+        100 * MIB,
+        1,
+        1,
+    );
+    let blob = cand_at(
+        "C-002",
+        "/Users/x/code/api/node_modules/leftpad/dist/index.js",
+        Grade::RebuildableFromSource,
+        100 * MIB,
+        1,
+        2,
+    );
+    // SPEC §4 stage 2/4 headline: the npm CAS store is NOT under ~/Library/Caches.
+    let cacache = cand_at(
+        "C-003",
+        "/Users/x/.npm/_cacache",
+        Grade::PureCache,
+        100 * MIB,
+        1,
+        3,
+    );
+    let trash = cand_at(
+        "C-004",
+        "/Users/x/.Trash",
+        Grade::Redownloadable,
+        100 * MIB,
+        1,
+        4,
+    );
+    let caches_root = cand_at(
+        "C-005",
+        "/Users/x/Library/Caches",
+        Grade::PureCache,
+        100 * MIB,
+        1,
+        5,
+    );
+    let caches_child = cand_at(
+        "C-006",
+        "/Users/x/Library/Caches/com.apple.Safari/blob",
+        Grade::PureCache,
+        100 * MIB,
+        1,
+        6,
+    );
+
+    let plan = plan::build(
+        &[root, blob, cacache, trash, caches_root, caches_child],
+        &pc,
+        &vols,
+    );
+    let act = |i: usize| &plan.entries[i].action;
+    assert!(
+        action_eq(act(0), &PlanAction::Quarantine),
+        "store root stays eligible"
+    );
+    assert!(
+        action_eq(act(1), &refuse(Refusal::PolicyDeny)),
+        "descendant refused"
+    );
+    assert!(
+        action_eq(act(2), &PlanAction::Quarantine),
+        "~/.npm/_cacache not preset-matched"
+    );
+    assert!(
+        action_eq(act(3), &PlanAction::Quarantine),
+        "~/.Trash is not */Trash/*"
+    );
+    assert!(
+        action_eq(act(4), &PlanAction::Quarantine),
+        "cache root stays eligible"
+    );
+    assert!(
+        action_eq(act(5), &refuse(Refusal::PolicyDeny)),
+        "cache child refused"
+    );
+}
+
 #[test]
 fn policy_combines_target_and_mta_rules() {
     let c = policy::compile("腾出 25 GB，别动我这两周在跑的项目").expect("policy compiles");
@@ -512,7 +619,9 @@ fn policy_xcode_archives_expands_glob() {
         .join("Library/Developer/Xcode/Archives")
         .to_string_lossy()
         .into_owned();
-    assert_eq!(c.constraints.deny_globs, vec![want]);
+    let mut want_all = default_deny_globs();
+    want_all.push(want);
+    assert_eq!(c.constraints.deny_globs, want_all);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_GLOBS));
 }
 
@@ -525,7 +634,9 @@ fn policy_tilde_path_expands_glob() {
         .join("Library/Developer/Xcode/DerivedData")
         .to_string_lossy()
         .into_owned();
-    assert_eq!(c.constraints.deny_globs, vec![want]);
+    let mut want_all = default_deny_globs();
+    want_all.push(want);
+    assert_eq!(c.constraints.deny_globs, want_all);
 }
 
 /// (f) unmatched free text lands in unmatched; constraints stay at defaults.
@@ -634,7 +745,16 @@ fn policy_bie_dong_zui_jin_is_mta() {
 fn policy_two_bie_dong_clauses_both_rules_fire() {
     let c = policy::compile("别动最近在跑的项目，别动 Xcode 归档").expect("policy compiles");
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
-    assert_eq!(c.constraints.deny_globs.len(), 1);
+    // Exactly one user glob on top of the seeded presets — the MTA clause must not
+    // also be read as a glob (that would make this 2 over the defaults).
+    let home = dirs::home_dir().expect("home dir");
+    let mut want_all = default_deny_globs();
+    want_all.push(
+        home.join("Library/Developer/Xcode/Archives")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert_eq!(c.constraints.deny_globs, want_all);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
     assert!(c.applied_rules.contains(&policy::RULE_DENY_GLOBS));
 }
@@ -650,7 +770,9 @@ fn policy_space_glued_clause_target_and_deny_globs_both_fire() {
         .join("Library/Developer/Xcode/Archives")
         .to_string_lossy()
         .into_owned();
-    assert_eq!(c.constraints.deny_globs, vec![want]);
+    let mut want_all = default_deny_globs();
+    want_all.push(want);
+    assert_eq!(c.constraints.deny_globs, want_all);
     assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
     assert!(c.applied_rules.contains(&policy::RULE_DENY_GLOBS));
     assert!(c.unmatched.is_empty(), "no residue: {:?}", c.unmatched);
@@ -663,8 +785,9 @@ fn policy_space_glued_mta_clause_not_double_read() {
     let c = policy::compile("腾出 25 GB 别动最近的项目").expect("policy compiles");
     assert_eq!(c.constraints.target_bytes, Some(25 * GIB));
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
-    assert!(
-        c.constraints.deny_globs.is_empty(),
+    assert_eq!(
+        c.constraints.deny_globs,
+        default_deny_globs(),
         "no glob from an MTA fragment"
     );
     assert!(c.applied_rules.contains(&policy::RULE_TARGET_BYTES));
@@ -709,8 +832,9 @@ fn policy_bie_dong_zui_jin_fires_mta() {
     let c = policy::compile("别动最近的项目").expect("policy compiles");
     assert_eq!(c.constraints.deny_under_mta_secs, TWO_WEEKS_SECS);
     assert!(c.applied_rules.contains(&policy::RULE_DENY_UNDER_MTA));
-    assert!(
-        c.constraints.deny_globs.is_empty(),
+    assert_eq!(
+        c.constraints.deny_globs,
+        default_deny_globs(),
         "MTA fragment must not become a glob"
     );
 }

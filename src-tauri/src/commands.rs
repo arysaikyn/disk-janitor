@@ -1038,7 +1038,7 @@ mod purge_gate_tests {
         let dir = home.join(".disk-janitor");
         std::fs::create_dir_all(&dir).unwrap();
         let json = format!(
-            r#"{{"plan_id":"{id}","created_at":"2026-09-10T00:00:00Z","entries":[],"totals":{{"quarantine_bytes":0,"quarantine_entries":0,"prune_bytes":0,"prune_cmds":0,"refused":0,"snapshot_caveat":null}},"policy_snapshot":{{"target_bytes":null,"min_bytes":1,"allow_grades":["pure_cache"],"deny_globs":[],"deny_under_mta_secs":0,"allow_network_regen":true,"allow_prune_commands":true,"grace_hours":72,"max_entries":1000}}}}"#
+            r#"{{"plan_id":"{id}","created_at":"2026-09-10T00:00:00Z","entries":[],"totals":{{"quarantine_bytes":0,"quarantine_entries":0,"prune_bytes":0,"prune_cmds":0,"refused":0,"snapshot_caveat":null}},"policy_snapshot":{{"target_bytes":null,"min_bytes":1,"allow_grades":["pure_cache"],"deny_globs":["*/.git/*","*/node_modules/*","*/lost+found/*","*/Trash/*","*/.Trash-*/*","/Users/*/Library/Caches/*"],"deny_under_mta_secs":0,"allow_network_regen":true,"allow_prune_commands":true,"grace_hours":72,"max_entries":1000}}}}"#
         );
         std::fs::write(dir.join(format!("plan-{id}.json")), json).unwrap();
     }
