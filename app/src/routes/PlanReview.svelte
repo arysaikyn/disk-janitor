@@ -168,7 +168,9 @@
       } else if (msg.t === "error") {
         rows = [...rows, { key: msg.cid + msg.err, kind: "err", text: `${msg.cid} · ${msg.err}` }];
       }
-      if (rows.length > 50) rows = rows.slice(-50);
+      // Receipt is itemized and verbose by default (SPEC §9 row 54, borrowing the
+      // S3 DeleteResult{Deleted[],Error[]} shape): every applied/refused entry keeps
+      // its own line. Truncation here silently hid losses — the list scrolls instead.
     };
     try {
       const res = (await invoke("apply_plan", { planId, channel: ch })) as Partial<ApplyResult>;
@@ -454,6 +456,10 @@
     list-style: none;
     margin: 0;
     padding: 0;
+    /* Verbose-by-default receipt: the full list is kept, so it must scroll
+       rather than push the apply/purge controls off-screen. */
+    max-height: 360px;
+    overflow-y: auto;
   }
   .act-row {
     display: flex;
