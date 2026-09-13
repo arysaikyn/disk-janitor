@@ -885,11 +885,13 @@ in the same note (D-11).
 ---
 
 *ADRs 1–12 verdict-stamped 2026-08-30 (9 upheld, 3 amended — see footer below), derived from
-research notes [02]–[11]; iterate alongside `docs/SPEC.md` (course rule).*
+research notes [02]–[11]; iterate alongside `docs/SPEC.md` (course rule). Later decisions:
+D-32…D-38 (2026-09-10, refusal enum / dua-core 4.0.0 / HTTP ChatClient / demo-data switch)
+are recorded in `docs/decision-sheet-2026-09-10.md`.*
 
 ---
 *Verdicts recorded 2026-08-30 in a single review session: 9 upheld, 3 amended (ADR-1, ADR-2, ADR-8), 0 rejected, 0 contested. Amendments propagate into DESIGN §3.10, SPEC §7–8, crate-map §1f/§3 (landed same day).*
-> Decision register D-01…D-31 (22 from the 08-31 grill; D-23…D-30 added by wave 2, 09-01; D-31 added 09-08 after the design-language v2 rework);
+> Decision register D-01…D-31 (22 from the 08-31 grill; D-23…D-30 added by wave 2, 09-01; D-31 added 09-08 after the design-language v2 rework). **D-32…D-38 were raised 2026-09-10 and live in `docs/decision-sheet-2026-09-10.md` — this register stops at D-31 by design**;
 *2026-08-31 session: GUI pivot (Tauri + Svelte per notes [12]/[13]) — ADR-5 amended, ADR-11
 amended, new ADR-13/14/16/17/18 from 22 owner decisions (decision register, 3 grill rounds).
 Statuses read "accepted (owner-confirmed)" pending the owner's line-by-line stamp pass over
@@ -900,7 +902,7 @@ those five texts; every substantive decision was owner-answered in the register.
 
 # Appendix — Decision register (2026-08-31 grill, owner-confirmed)
 
-> Decision register D-01…D-31 (22 from the 08-31 grill; D-23…D-30 added by wave 2, 09-01; D-31 added 09-08 after the design-language v2 rework);
+> Decision register D-01…D-31 (22 from the 08-31 grill; D-23…D-30 added by wave 2, 09-01; D-31 added 09-08 after the design-language v2 rework). D-32…D-38 are in `docs/decision-sheet-2026-09-10.md`;
 > the 'docs to amend' column cites pre-merge file names — see the citation map at the top of this file.
 
 Format: ID | decision | owner answer (verbatim or paraphrased) | docs to amend

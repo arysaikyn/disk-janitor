@@ -10,9 +10,11 @@
 **Status snapshot (2026-09-08; updated 2026-09-13):** design 100% · implementation M1–M4 done
 (120 tests green; M5 = submission deliverables in progress) ·
 ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01…D-31
-confirmed (Round 4 landed 09-01) · course deadlines re-verified 09-08 against the official
+confirmed (Round 4 landed 09-01; D-32…D-38 dispositioned 2026-09-10 — recorded in
+`docs/decision-sheet-2026-09-10.md`, not this register) · course deadlines re-verified 09-08 against the official
 作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
-public-demo post · 9.8 try-3-works feedback (⚠ status unverified — confirm live) · 9.10 课堂展示 (**delivered 09-10**) · 9.13
+public-demo post · 9.8 try-3-works feedback (⚠ **both status UNKNOWN — no vault artifact either way**;
+confirm on the forum, see `deliverables-checklist.md` §Participation) · 9.10 课堂展示 (**delivered 09-10**) · 9.13
 final submission. R1–R6 mapping verified verbatim against the rubric.
 **Evidence base:** `research/` — 33 verified notes (01–13 verified at source; 14–20 landed
 09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued; 22–33 landed 09-13, the
@@ -305,7 +307,7 @@ amended in the same pass.
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
 | **Implementation** | ✅ **M1–M4 done** — 120 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; M5 = docs/deliverables in progress (09-13) |
 | **09-10 课堂展示** (5 min demo + 2 min Q&A; 25 pts) | ✅ delivered 09-10 — deck committed at `docs/presentation/ai-experience.{html,pdf,png}` (`acd44e3`); competitor/presentation research: note 13 |
-| **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ deadline passed — **no recorded evidence the "≥3 作品试用反馈" post is live**; 09-06 公开展示帖 status likewise unverified. Confirm both are posted before the 9.13 submission |
+| **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ deadline passed — **status UNKNOWN, not negative.** The vault holds no artifact either way: `night-think/2026-W37.md:20` records the 09-06 公开展示帖 status as UNKNOWN, `:34`/`:101` show zero evidence of a 试用反馈 post through 09-10, and `vault/Courses/Rust/Agent-Project.md:24` carries the 09-06 row with no ✅. Confirm both on the course forum before 9.13; do not record a ✅ the vault does not support |
 
 
 # Part B — Technical design
@@ -1274,8 +1276,8 @@ Dependency notes:
 
 | Repo | License | Posture |
 |---|---|---|
-| **Shipped dependency set** (everything actually in `Cargo.toml`): dua-core, globset, crossbeam-channel, sysinfo, libc, tempfile, crc32fast, fs-err, serde + serde_json, toml, thiserror, anyhow, clap, chrono, uuid, dirs, xattr (`cfg(unix)`), tokio + async-openai (optional, `llm` feature) | MIT / Apache-2.0 / Unlicense / PD | vendoring & borrowing safe — verify each per-file at adoption |
-| **Design-reference set (NOT dependencies)**: dua-cli (the CLI product; only `dua-core` is shipped), kondo, cargo-sweep, cargo-cache, npkill, gdu, ncdu, gitui | MIT / Apache-2.0 / Unlicense / PD | read for ideas only — none appear in `Cargo.toml`; their borrow rows are in §9 above |
+| **Shipped dependency set** (everything actually in `Cargo.toml`): dua-core, globset, crossbeam-channel, sysinfo, libc, tempfile, crc32fast, fs-err, serde + serde_json, toml, thiserror, anyhow, clap, chrono, uuid, dirs, xattr (`cfg(unix)`), tokio + async-openai (optional, `llm` feature) | **MIT-only**: dua-core, sysinfo, tokio, async-openai · **MIT OR Apache-2.0**: crossbeam-channel, libc, tempfile, crc32fast, fs-err, serde, serde_json, toml, thiserror, anyhow, clap, chrono, dirs, xattr · **Apache-2.0 OR MIT**: uuid · **Unlicense OR MIT**: globset (sole Unlicense) — **no PD anywhere** (all 20 manifests re-read 2026-09-13) | vendoring & borrowing safe — verify each per-file at adoption. `walkdir` reaches `Cargo.lock` only transitively; it is not a declared dependency |
+| **Design-reference set (NOT dependencies)**: dua-cli (the CLI product; only `dua-core` is shipped), kondo, cargo-sweep, cargo-cache, npkill, gdu, ncdu, gitui | **MIT-only**: dua-cli, kondo, cargo-sweep, npkill, gdu, ncdu, gitui (gitui's manifest grants MIT alone) · **MIT OR Apache-2.0**: cargo-cache — **no PD, no Unlicense** in this set | read for ideas only — none appear in `Cargo.toml`; their borrow rows are in §9 above. `dust`/`du-dust` is **Apache-2.0 only** and sits in the surveyed row below, not here |
 | **Surveyed but NOT shipped** (design references, or dropped in the 2026-09-12 audit): rig, swiftide, fs4, nix, rustix, walkdir, ignore, rayon, tiktoken-rs, same-file, secrecy, backon, cargo_metadata, reqwest, czkawka_core/krokiet, phpfc/cleanser, parallel-disk-usage, du-dust, diskus, jwalk, tauri-specta/specta/typeshare/ts-rs, inquire/dialoguer, proptest family / `fail` / `assert_cmd` / `quickcheck` / `libfuzzer-sys`, redb/sled/jammdb/sanakirja/wal/wal-rs/okaywal/LMDB, borgbackup/restic/rclone/git-annex/trash-rs/gtrash/rmw/rmlint/jdupes/fdupes/fclones/dupeGuru/BleachBit/coreutils/glib, Homebrew/Nix/Docker-cli, node-prune/pip/fastlane/dev-cleaner, humantime/parse-size/bytesize/byte-unit/humansize, Cedar/OPA/sqlparser/casbin-rs/koto/pomsky/starlark-rust/rhai/PostgreSQL/Kubernetes-apimachinery, genai/candle/rmcp/ollama-rs/llm-chain/kalosm/mistral.rs, tigerbeetle, libfiu, W3C ARIA APG, Docker/Kubernetes/Microsoft/Apple/GNOME/Material docs, dohooo/helmor, Ne-IA/convertia, lanyeeee/bilibili-video-downloader, basharovV/musicat | MIT / Apache-2.0 / Unlicense (the entries after `reqwest` are licence-heterogeneous — see the note cell) | no code imported — see §1 banner and Part D §2.4. Dropped from `Cargo.toml`; `reqwest`/`secrecy`/`walkdir`/`same-file`/`rustix` persist in `Cargo.lock` as async-openai transitives, and `cargo_metadata` in `src-tauri/Cargo.lock` via `tauri-utils` (⊘ ≠ absent from the lock); entries listed after `reqwest` are licence-heterogeneous — GPL-3.0, LGPL-2.1, AGPL-3+, BOLA v1.1, CC-BY-SA 4.0, BUSL-1.1 and one NOASSERTION — each §9 row states its own licence |
 | Pearcleaner | Apache-2.0 + Commons Clause v1.0 | read for behavior; do not vendor into a product [02 §rec] |
 | GrandPerspective, git, tw93/Mole | GPL-2.0 / GPL-3.0 | read as design reference only — never import code [02 §rec][03 §rec] |
