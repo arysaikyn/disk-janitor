@@ -228,11 +228,27 @@ pub fn volumes() -> Vec<VolumeInfo> {
         // rename_excl probe: APFS/HFS+ support VOL_CAP_INT_RENAME_EXCL; exFAT/FAT do not.
         let fs = d.file_system().to_string_lossy().into_owned();
         let rename_excl = matches!(fs.as_str(), "apfs" | "hfs" | "apfs (case-sensitive)");
-        // sysinfo's available_space() is raw statfs bavail on macOS — the honest free
-        // byte count; sysinfo exposes no purgeable/important split here.
-        let free_raw = d.available_space();
-        // TODO(M3): CFURL volumeImportantUsage keys per [04 §sysinfo]
-        let free_important = free_raw;
+        // Two free figures, two sources — the SPEC §3.1 pair must be labeled for
+        // what each one actually is ([02 §3]: `statfs` excludes purgeable, the
+        // CFURL capacity keys include it, and the UI has to pick one and say so).
+        //
+        // `free_important`: sysinfo `available_space()`. On macOS 0.39.6 that is
+        // NOT a statfs read — the apple backend requests
+        // `kCFURLVolumeAvailableCapacityForImportantUsageKey` and prefers it,
+        // falling back to the raw `kCFURLVolumeAvailableCapacityKey` only when it
+        // reads 0 (`sysinfo-0.39.6/src/unix/apple/disk.rs:379-392`). So this is
+        // the Finder / About-This-Mac "available" figure: free + purgeable.
+        let free_important = d.available_space();
+        // `free_raw`: a real `statfs(2)` `f_bavail` read — the literal raw
+        // filesystem free space, excluding purgeable. Raw libc FFI per R1
+        // (SPEC §5: "syscall layer via raw `libc` FFI"). darwin's `statfs` has no
+        // `f_frsize`, so `f_bsize` is the allocation unit.
+        // Fallback: statfs can only fail here if the mount vanished mid-enumeration.
+        // Report the important figure (the larger of the two) rather than 0, so a
+        // "used = total - free" display degrades instead of claiming a full disk.
+        let free_raw = statfs_free(&mount).unwrap_or(free_important);
+        // `free_opportunistic` stays 0 — see the field doc in `VolumeInfo` for why
+        // (no sysinfo path, no in-tree CoreFoundation read).
         let ro = d.is_read_only()
             // sysinfo's is_read_only() is statfs MNT_RDONLY — truthful per mount, but the
             // sealed-system `/` reports RO while firmlinked writes land on the Data slice
@@ -245,12 +261,32 @@ pub fn volumes() -> Vec<VolumeInfo> {
             total: d.total_space(),
             free_raw,
             free_important,
-            free_opportunistic: 0, // TODO(M3): NSURLVolumeAvailableCapacityForOpportunisticUsageKey
+            free_opportunistic: 0,
             read_only: ro,
             rename_excl,
         });
     }
     out
+}
+
+/// Raw filesystem free space via `statfs(2)` — `f_bavail` blocks × `f_bsize`.
+/// Excludes purgeable/snapshot-reclaimable space, unlike the CFURL capacity keys
+/// ([02 §3]). darwin's `statfs` has no `f_frsize`, so `f_bsize` is the unit.
+/// `None` when the mount is gone or the path does not fit `CString`.
+fn statfs_free(mount: &std::path::Path) -> Option<u64> {
+    use std::ffi::CString;
+    let c = CString::new(mount.as_os_str().as_encoded_bytes()).ok()?;
+    let mut buf = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `c` is a valid NUL-terminated path; on success statfs initializes
+    // the whole `statfs` struct, which we then read through `assume_init`.
+    let rc = unsafe { libc::statfs(c.as_ptr(), buf.as_mut_ptr()) };
+    if rc != 0 {
+        return None;
+    }
+    let st = unsafe { buf.assume_init() };
+    // f_bsize is the volume's allocation unit; f_bavail is blocks free to a
+    // non-privileged caller (f_bfree would count reserved blocks).
+    Some(st.f_bavail.saturating_mul(u64::from(st.f_bsize)))
 }
 
 fn dev_of(path: &std::path::Path) -> Option<u64> {

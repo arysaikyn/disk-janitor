@@ -25,10 +25,13 @@
     mount: string;
     fs: string;
     total: number;
+    /** Raw statfs free space — purgeable excluded (SPEC §3.1). */
     free_raw: number;
+    /** Free + purgeable: what Finder calls available (SPEC §3.1). */
+    free_important: number;
     read_only: boolean;
     writable: boolean;
-    /** Not in the Rust VolumeDto yet; surfaced when the demo layer provides it. */
+    /** Demo-layer only: space pinned by Time Machine local snapshots (SPEC §3.2). */
     snapshot_held?: number;
   }
 
@@ -125,7 +128,11 @@
       />
     </div>
     <div class="metric-cell">
-      <MetricLine label={t("dash.free")} value={vol ? fmtBytes(vol.free_raw) : "—"} />
+      <MetricLine
+        label={t("dash.free")}
+        value={vol ? fmtBytes(vol.free_raw) : "—"}
+        sub={vol ? t("dash.free_important").replace("{n}", fmtBytes(vol.free_important)) : undefined}
+      />
     </div>
     <div class="metric-cell">
       {#if vol?.snapshot_held}

@@ -101,14 +101,33 @@ pub struct Candidate {
 /// One volume as reported by scan — SPEC §3.1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeInfo {
+    /// `st_dev` of the mount point — the same-volume test for quarantine moves
+    /// (SPEC §5.1: a rename cannot cross filesystems).
     pub dev: u64,
     pub mount: PathBuf,
+    /// `statfs.f_fstypename` (e.g. `apfs`) — drives the `rename_excl` probe.
     pub fs: String,
+    /// Total bytes on the volume (`statfs.f_blocks × f_bsize`).
     pub total: u64,
+    /// Raw filesystem free space from `statfs(2)` `f_bavail × f_bsize`. Excludes
+    /// purgeable space (local Time Machine snapshots, caches, swap) — what a
+    /// non-privileged caller can allocate right now [02 §3].
     pub free_raw: u64,
+    /// Free + purgeable — the Finder / About-This-Mac "available" figure, read
+    /// from `kCFURLVolumeAvailableCapacityForImportantUsageKey` via sysinfo
+    /// (`sysinfo-0.39.6/src/unix/apple/disk.rs:379-392`; falls back to the raw
+    /// key only when that one reads 0) [02 §3]. Always ≥ [`Self::free_raw`].
     pub free_important: u64,
+    /// `NSURLVolumeAvailableCapacityForOpportunisticUsageKey` — important space
+    /// plus opportunistic (long-idle) space. Hard-zero: no sysinfo path and no
+    /// CoreFoundation read in-tree (`TODO(M3)`).
     pub free_opportunistic: u64,
+    /// Mount is read-only for our purposes — `statfs` `MNT_RDONLY` *and* a
+    /// create+remove probe failed. The sealed-system `/` reports the flag while
+    /// firmlinked writes land on the Data slice, so the probe decides.
     pub read_only: bool,
+    /// `renamex_np(RENAME_EXCL)` is supported (APFS/HFS+) — the primitive that
+    /// makes quarantine collision-free without a check-then-act race (SPEC §5.1).
     pub rename_excl: bool,
 }
 

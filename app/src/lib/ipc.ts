@@ -14,7 +14,10 @@ export interface VolumeDto {
   mount: string;
   fs: string;
   total: number;
+  /** Raw `statfs` free space — purgeable excluded (SPEC §3.1). */
   free_raw: number;
+  /** Free + purgeable: the Finder "available" figure (SPEC §3.1). */
+  free_important: number;
   read_only: boolean;
   writable: boolean;
   /** demo-only: snapshot-pinned space (SPEC §3.2); not in the Rust DTO */
@@ -245,6 +248,7 @@ function demo<T>(cmd: string, args?: Record<string, unknown>): T {
           fs: "APFS",
           total: 1_000_000_000_000,
           free_raw: 387_600_000_000,
+          free_important: 401_200_000_000,
           read_only: false,
           writable: true,
           snapshot_held: 13_600_000_000,

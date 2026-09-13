@@ -102,9 +102,29 @@ Local SDK ground truth (`/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr
 
 `crc32fast-1.5.1/src/lib.rs` doc: "This crate contains multiple CRC32 implementations: … An optimized implementation for `aarch64` using `crc32` instructions" and "Calling the `Hasher::new` constructor at runtime will perform a feature detection to select the most optimal implementation for the current CPU feature set." In `src/specialized/aarch64.rs` the gated path is `is_aarch64_feature_detected!("crc")` → `#[target_feature(enable = "crc")]`, i.e. the hardware CRC32 instruction, with a `MIN_TRIPLE_QUADS` threshold (192 ⇒ the implementation switches away from the latency-bound `crc32d` chain for ~1.5 KiB+ inputs). Our `src/ledger.rs:198` calls exactly the recommended advanced entry point (`crc32fast::Hasher::new()`, not the one-shot `crc32fast::hash`) because the envelope at `src/ledger.rs:65-73` is built field-by-field: `{"v":1,"seq":N,"ts":…,"kind":…,"crc32":…,"prev_crc":…,"rec":…}`. **This is a confirmation of note 08 §4, not a new finding.** What is new is that `crc32fast` has **zero RUSTSEC advisories** and its `crc32()/pclmulqdq` + `aarch64 crc` detection means the choice is not leaving Apple-Silicon performance on the table — the alternative candidate `blake3 1.8.7` (209 726 B, `CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception`) would be cryptographically stronger but 4.4× the crate size for a *corruption-detection* role, and the per-record cost is dominated by 64–200 B JSON envelopes where CRC32 throughput is irrelevant. `memmap2` was also considered (its `RUSTSEC-2026-0186` is patched exactly at `0.9.11`) and rejected: no `mmap` in the ledger path.
 
-### 6. Volume/capacity facts — `sysinfo` 0.39.6's two doc sentences are the whole contract
+### 6. Volume/capacity facts — `sysinfo` 0.39.6's macOS backend *does* prefer the important-usage key
 
-`sysinfo` master `src/common/disk.rs` (read this session) documents `is_read_only()` as "Returns `true` if the disk is read-only." and `available_space()` as "Returns the available disk size, in bytes." — there is **no** purgeable/important-usage split in the crate API, which is exactly what our in-tree comments at `src/scan/platform/macos.rs:213-229` say ("raw statfs bavail" for `available_space()`, "statfs MNT_RDONLY" for `is_read_only()`, and `TODO(M3)` for `CFURLVolumeAvailableCapacityForImportantUsageKey`). Verified crate facts: `sysinfo` 0.39.6, MIT, MSRV **1.95** (the highest of any dependency we hold — above our `rustc 1.97.1`, so fine, but it is the binding constraint if the toolchain is ever pinned lower), 241 117 B, published 2026-07-09. In the lock trees `sysinfo` is a **direct** root dependency; `rustix` is transitive (`tempfile`, `xattr`) and, in the Tauri tree, also via `async-io`/`polling`/`zbus`. Practical consequence for the design document: the macOS "important usage" number that Finder shows is **not** available from `sysinfo` and must come from a CoreFoundation call, which is the same conclusion `TODO(M3)` already records — no crate swap fixes it.
+**Correction (2026-09-13, was the opposite claim).** This section previously asserted that `sysinfo` exposes "no purgeable/important-usage split". That was inferred from the *doc comments* on `src/common/disk.rs`: `is_read_only()` is documented as "Returns `true` if the disk is read-only." and `available_space()` as "Returns the available disk size, in bytes." The docs are the crate's **public** contract and say nothing about provenance — but provenance is what decides whether the number matches Finder, and the macOS backend answers it. `sysinfo-0.39.6/src/unix/apple/disk.rs:379-392`:
+
+```rust
+fn get_available_volume_space(disk_props: &CFDictionary) -> Option<u64> {
+    // We prefer `AvailableCapacityForImportantUsage` over `AvailableCapacity` because
+    // it takes more of the system's properties into account, like the trash, system-managed caches,
+    // etc. It generally also returns higher values too, because of the above, so it's a more
+    // accurate representation of what the system _could_ still use.
+    unsafe {
+        get_int_value(disk_props, kCFURLVolumeAvailableCapacityForImportantUsageKey)
+            .filter(|bytes| *bytes != 0)
+            .or_else(|| get_int_value(disk_props, kCFURLVolumeAvailableCapacityKey))
+    }
+}
+```
+
+Both keys are requested in the property list (`:112-113`, `:278-279`) and the result lands in `Disk::available_space` (`:124`, `:459-460`, `:523`). So on macOS `available_space()` **is** the Finder / About-This-Mac figure — free + purgeable — with a fallback to the raw key only when the important one reads 0. `is_read_only()` is still a `statfs` `MNT_RDONLY` read, exactly as the in-tree comment says.
+
+Measured on this machine (`janitor scan`, 2026-09-13): `/` APFS reported `free_raw` 121.42 GiB against `free_important` 171.04 GiB — a 49.6 GiB purgeable delta. The two figures are genuinely distinct and both are now read in-tree: `free_raw` from a raw `libc::statfs` `f_bavail × f_bsize` call, `free_important` from `sysinfo`.
+
+Consequence for the design document, revised: the Finder number needs **no** CoreFoundation call — `sysinfo` already delivers it on macOS, and `src/scan/platform/macos.rs` labels it accordingly. The remaining `TODO(M3)` is `NSURLVolumeAvailableCapacityForOpportunisticUsageKey` (important + opportunistic), which still has no sysinfo path. Correct primary source: `docs/research/04-rust-walk-and-metadata-crates.md:92` ("available-space preference logic (`kCFURLVolumeAvailableCapacityForImportantUsageKey` first)"), which had this right all along. Verified crate facts unchanged: `sysinfo` 0.39.6, MIT, MSRV **1.95** (the highest of any dependency we hold — above our `rustc 1.97.1`, so fine, but it is the binding constraint if the toolchain is ever pinned lower), 241 117 B, published 2026-07-09. In the lock trees `sysinfo` is a **direct** root dependency; `rustix` is transitive (`tempfile`, `xattr`) and, in the Tauri tree, also via `async-io`/`polling`/`zbus`.
 
 ### 7. Our-tree defect re-verified: two BSD-flag constants are wrong (reported first by sibling note 23)
 

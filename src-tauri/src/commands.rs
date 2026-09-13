@@ -105,7 +105,11 @@ pub struct VolumeDto {
     pub mount: String,
     pub fs: String,
     pub total: u64,
+    /// Raw `statfs` free space (purgeable excluded) — SPEC §3.1.
     pub free_raw: u64,
+    /// Free + purgeable (Finder "available") — SPEC §3.1; both figures are shown
+    /// labeled, since they answer different questions [02 risks #1].
+    pub free_important: u64,
     pub read_only: bool,
     pub writable: bool,
 }
@@ -122,6 +126,7 @@ pub async fn get_volumes(state: State<'_, ScanState>) -> Result<Vec<VolumeDto>, 
             fs: v.fs,
             total: v.total,
             free_raw: v.free_raw,
+            free_important: v.free_important,
             read_only: v.read_only,
             writable: !v.read_only,
         })
@@ -1170,13 +1175,16 @@ mod demo {
         ]
     }
 
-    /// get_volumes demo — one writable APFS root (ipc.ts get_volumes case).
+    /// get_volumes demo envelope (ipc.ts get_volumes case). The two free figures
+    /// differ by exactly the purgeable space this demo pins in `snapshot_held` —
+    /// 387.6 GB raw / 401.2 GB important, like a real volume holding snapshots.
     pub fn volumes() -> Vec<VolumeDto> {
         vec![VolumeDto {
             mount: "/".into(),
             fs: "APFS".into(),
             total: 1_000_000_000_000,
             free_raw: 387_600_000_000,
+            free_important: 401_200_000_000,
             read_only: false,
             writable: true,
         }]
