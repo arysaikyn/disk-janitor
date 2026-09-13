@@ -10,6 +10,10 @@
 //! is resolved inside `execute/` AFTER a human confirms. No tool in this module calls
 //! `execute::` — `apply_plan`/`restore_op` return `awaiting: "human-confirm"`.
 //!
+//! Ask-before-act (SPEC §9 row 50): every call is classified by
+//! `AgentPermission::{Auto,Ask,Deny}` before dispatch. `Deny` is fail-closed — an
+//! unregistered tool name produces a typed `ToolOutput::Denied`, never execution.
+//!
 //! Path-blind invariant (§5.4): the model sees only opaque ids (C-001…), byte counts,
 //! grades, and evidence summaries. Enforcement = (1) tool outputs carry no paths,
 //! (2) `serialize_tool_result` is the ONE serializer chokepoint — every string leaf is
@@ -31,6 +35,43 @@ use crate::{Candidate, Grade, VolumeInfo};
 
 /// Per-call retry cap per (tool name, args) hash (swiftide `tool_retry_limit=3`).
 pub const TOOL_RETRY_LIMIT: u32 = 3;
+
+// --- ask-before-act permission policy (SPEC §9 row 50; note 29 §6) -------------------
+
+/// Ask-before-act as a first-class loop policy (mistral.rs concept, reimplemented here).
+///
+/// `execute_tools` routes on this: `Auto` dispatches straight to the tool, `Ask`
+/// dispatches into the D-01 propose-only branch (whose result carries `awaiting`), and
+/// `Deny` is never dispatched — it becomes a typed [`ToolOutput::Denied`]. The policy is
+/// fail-closed: a tool that is not listed in [`AgentPermission::for_tool`] is denied
+/// rather than executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPermission {
+    /// Read-only inspection — the tool reports state or records intent; nothing to confirm.
+    Auto,
+    /// The tool would act on the disk: it may only *propose*; a human confirms (D-01).
+    Ask,
+    /// Not a registered tool — refuse, never execute.
+    Deny,
+}
+
+impl AgentPermission {
+    /// The permission policy for `tool` — the one place the loop's tool set and each
+    /// tool's permission are declared together.
+    pub fn for_tool(tool: &str) -> Self {
+        match tool {
+            // Read-only: volume/candidate totals, plan construction, receipts, verdict.
+            "scan_summary" | "candidates" | "build_plan" | "ledger_receipts" | "record_verdict" => {
+                Self::Auto
+            }
+            // PROPOSE-ONLY (D-01): the tool records intent and awaits a human.
+            "apply_plan" | "restore_op" => Self::Ask,
+            // Fail-closed: an unregistered tool is denied, never dispatched.
+            _ => Self::Deny,
+        }
+    }
+}
 
 // --- trajectory messages ---------------------------------------------------------
 
@@ -224,6 +265,14 @@ pub enum ToolOutput {
     /// Validation/execution failure — counted toward the per-call retry hash.
     Error {
         message: String,
+    },
+    /// Policy refusal (`AgentPermission::Deny`), fail-closed: the tool was never
+    /// dispatched. Typed separately from [`ToolOutput::Error`] so a policy denial is
+    /// distinguishable from a validation failure, and deliberately NOT counted toward
+    /// the per-call retry hash — re-asking a denied tool cannot change the answer.
+    Denied {
+        tool: String,
+        reason: String,
     },
 }
 
@@ -482,6 +531,10 @@ impl AgentRun {
             ToolOutput::VerdictRecorded { verdict, .. } => format!("{name}: verdict={verdict}"),
             // `message` can echo model-influenced text (unknown tool names) — scrub.
             ToolOutput::Error { message } => format!("{name}: error — {}", scrub_text(message)),
+            // `reason` can echo the same — scrub.
+            ToolOutput::Denied { reason, .. } => {
+                format!("{name}: denied — {}", scrub_text(reason))
+            }
         }
     }
 
@@ -535,9 +588,16 @@ impl AgentRun {
 
     /// Dispatch the model's tool calls against `ctx`. Every result crosses the
     /// `serialize_tool_result` chokepoint into history and the returned `ToolMsg`s.
+    ///
+    /// Ask-before-act (SPEC §9 row 50): each call first passes
+    /// [`AgentPermission::for_tool`]. `Auto` dispatches, `Ask` dispatches into the
+    /// D-01 propose-only branch, `Deny` (any unregistered name — fail-closed) never
+    /// dispatches and yields a typed [`ToolOutput::Denied`].
+    ///
     /// Transitions: → CallModel{turn+1}, or → Done{RequestedByTool} when the
     /// `record_verdict` control tool was called, or → Done{ToolFailLoop} when the same
-    /// (name, args) call failed `TOOL_RETRY_LIMIT` times.
+    /// (name, args) call returned `Error` `TOOL_RETRY_LIMIT` times. A `Denied` is not
+    /// retryable and so never reaches `ToolFailLoop`.
     pub fn execute_tools(&mut self, calls: &[ToolCall], ctx: &mut SessionCtx) -> Vec<ToolMsg> {
         if matches!(self.state, RunState::Done { .. }) {
             return Vec::new();
@@ -545,21 +605,37 @@ impl AgentRun {
         let mut msgs = Vec::with_capacity(calls.len());
         let mut stop_requested = false;
         for call in calls {
-            let out = match call.name.as_str() {
-                "scan_summary" => tool_scan_summary(ctx),
-                "candidates" => tool_candidates(ctx, &call.arguments),
-                "build_plan" => tool_build_plan(ctx, &call.arguments),
-                "apply_plan" => tool_apply_plan(ctx, &call.arguments),
-                "restore_op" => tool_restore_op(&call.arguments),
-                "ledger_receipts" => tool_ledger_receipts(self, ctx, &call.arguments),
-                "record_verdict" => {
-                    stop_requested = true;
-                    tool_record_verdict(&call.arguments)
-                }
-                other => ToolOutput::Error {
-                    message: format!("unknown tool: {other}"),
+            // Ask-before-act (SPEC §9 row 50): the permission policy gates dispatch.
+            // `Deny` is fail-closed — the tool function is never reached.
+            let out = match AgentPermission::for_tool(&call.name) {
+                // Fail-closed: an unregistered tool never reaches a tool function.
+                AgentPermission::Deny => ToolOutput::Denied {
+                    tool: call.name.clone(),
+                    reason: "not a registered tool: policy denies unknown tools".to_string(),
+                },
+                // `Auto` reads state or records intent; `Ask` is the PROPOSE-ONLY branch
+                // (D-01) — the tool returns a plan/op reference awaiting a human and
+                // never acts itself.
+                AgentPermission::Auto | AgentPermission::Ask => match call.name.as_str() {
+                    "scan_summary" => tool_scan_summary(ctx),
+                    "candidates" => tool_candidates(ctx, &call.arguments),
+                    "build_plan" => tool_build_plan(ctx, &call.arguments),
+                    "apply_plan" => tool_apply_plan(ctx, &call.arguments),
+                    "restore_op" => tool_restore_op(&call.arguments),
+                    "ledger_receipts" => tool_ledger_receipts(self, ctx, &call.arguments),
+                    "record_verdict" => {
+                        stop_requested = true;
+                        tool_record_verdict(&call.arguments)
+                    }
+                    // Unreachable: `for_tool` maps every other name to `Deny`.
+                    other => ToolOutput::Denied {
+                        tool: other.to_string(),
+                        reason: "not a registered tool: policy denies unknown tools".to_string(),
+                    },
                 },
             };
+            // Only malformed-argument failures are retryable; a policy `Denied` is
+            // permanent, so it must not burn turns toward `TOOL_RETRY_LIMIT`.
             if matches!(out, ToolOutput::Error { .. }) {
                 let n = self
                     .tool_attempts
@@ -1347,6 +1423,10 @@ mod leak_tests {
         });
         assert_path_blind(&ToolOutput::Error {
             message: "cannot touch /Users/aaikyn1/node_modules/_cacache ~/App.app".into(),
+        });
+        assert_path_blind(&ToolOutput::Denied {
+            tool: "rm_rf /Users/aaikyn1/Library/Developer/Xcode/DerivedData".into(),
+            reason: "policy deny-glob hit on ~/node_modules/_cacache and My App.app".into(),
         });
     }
 

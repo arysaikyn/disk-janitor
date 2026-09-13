@@ -417,6 +417,133 @@ fn apply_and_restore_are_propose_only() {
     assert!(!all.contains("/tmp/agent-test"), "path leaked: {all}");
 }
 
+// --- ask-before-act permission policy (SPEC §9 row 50) ------------------------------
+
+/// Fail-closed: a tool name outside the registry is denied, never executed. The denial
+/// is typed apart from a validation `Error`, and the model-influenced name it echoes
+/// still crosses the chokepoint (the path is scrubbed from the tool field).
+#[test]
+fn unregistered_tool_is_denied_not_errored() {
+    let home = tempfile::tempdir().unwrap();
+    let mut run = agent::AgentRun::new("deny", "test-model", vec![price()], Budget::default());
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+
+    let hostile = "rm_rf /Users/aaikyn1/node_modules";
+    let client = StubClient::new(vec![
+        Box::new(move |_| tool_call(hostile, "call-1", json!({}))),
+        Box::new(|_| final_text("acknowledged")),
+    ]);
+
+    let (done, msgs) = drive(&mut run, &client, &mut ctx);
+    assert_eq!(
+        done,
+        RunState::Done {
+            reason: StopReason::ModelStop
+        }
+    );
+
+    let denied: serde_json::Value = serde_json::from_str(&msgs[0].content).unwrap();
+    assert_eq!(
+        denied["t"], "denied",
+        "a policy denial must not read as an error"
+    );
+    assert_eq!(
+        denied["tool"], "rm_rf [redacted]",
+        "denied tool not scrubbed"
+    );
+    assert!(
+        !denied["reason"].as_str().unwrap().is_empty(),
+        "denial carries no reason"
+    );
+    assert!(!msgs[0].content.contains("/Users/aaikyn1"), "path leaked");
+}
+
+/// A `Deny` is permanent, so it must not consume the retry budget: four consecutive
+/// denials — one past `TOOL_RETRY_LIMIT` — leave the run alive to finish normally
+/// instead of tripping `ToolFailLoop`.
+#[test]
+fn repeated_denial_never_trips_the_tool_fail_loop() {
+    let home = tempfile::tempdir().unwrap();
+    let mut run = agent::AgentRun::new("retry", "test-model", vec![price()], Budget::default());
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+
+    let mut script: Vec<Box<dyn Fn(&[Msg]) -> ModelReply>> = Vec::new();
+    for i in 0..4 {
+        script.push(Box::new(move |_| {
+            tool_call("exfiltrate", &format!("call-{i}"), json!({}))
+        }));
+    }
+    script.push(Box::new(|_| final_text("no other route")));
+    let client = StubClient::new(script);
+
+    let (done, msgs) = drive(&mut run, &client, &mut ctx);
+    assert_eq!(
+        done,
+        RunState::Done {
+            reason: StopReason::ModelStop
+        },
+        "denials must not count toward the tool fail loop"
+    );
+    assert_eq!(msgs.len(), 4);
+    for m in &msgs {
+        let v: serde_json::Value = serde_json::from_str(&m.content).unwrap();
+        assert_eq!(v["t"], "denied");
+    }
+}
+
+/// The policy routes each call: an `Auto` tool dispatches and reports, an `Ask` tool
+/// reaches its propose-only branch, and a tool that fails on its own state stays a
+/// validation `Error` rather than being relabelled as a policy denial.
+#[test]
+fn permission_policy_routes_auto_and_ask_calls() {
+    let home = tempfile::tempdir().unwrap();
+    let mut run = agent::AgentRun::new("policy", "test-model", vec![price()], Budget::default());
+    let mut ctx = sess_ctx(home.path(), default_candidates(), vec![vol(1)]);
+
+    let client = StubClient::new(vec![
+        Box::new(|_| tool_call("scan_summary", "call-1", json!({}))),
+        Box::new(|_| tool_call("apply_plan", "call-2", json!({"plan_id": "pl-missing"}))),
+        Box::new(|_| tool_call("build_plan", "call-3", json!({"target_bytes": 2 * GIB}))),
+        Box::new(|msgs| {
+            let plan_id = last_tool_field(msgs, "plan_id");
+            tool_call("apply_plan", "call-4", json!({"plan_id": plan_id}))
+        }),
+        Box::new(|_| tool_call("record_verdict", "call-5", json!({"verdict": "proceed"}))),
+    ]);
+
+    let (done, msgs) = drive(&mut run, &client, &mut ctx);
+    assert_eq!(
+        done,
+        RunState::Done {
+            reason: StopReason::RequestedByTool
+        }
+    );
+
+    let scanned: serde_json::Value = serde_json::from_str(&msgs[0].content).unwrap();
+    assert_eq!(scanned["t"], "scan_summary", "Auto tool was not dispatched");
+
+    let bad: serde_json::Value = serde_json::from_str(&msgs[1].content).unwrap();
+    assert_eq!(bad["t"], "error", "argument failure must stay an error");
+
+    let applied: serde_json::Value = serde_json::from_str(&msgs[3].content).unwrap();
+    assert_eq!(applied["t"], "proposed", "Ask tool must only propose");
+    assert_eq!(applied["awaiting"], "human-confirm");
+}
+
+/// The permission table and the advertised registry must agree: a tool the loop offers
+/// the model is never one the policy would always refuse.
+#[test]
+fn advertised_tools_are_never_denied() {
+    for def in agent::tool_defs() {
+        assert_ne!(
+            agent::AgentPermission::for_tool(&def.name),
+            agent::AgentPermission::Deny,
+            "advertised tool {} is denied by policy",
+            def.name
+        );
+    }
+}
+
 // --- path-blindness -----------------------------------------------------------------
 
 /// Real tempdir paths + name hints seeded into candidates and evidence; after the run
