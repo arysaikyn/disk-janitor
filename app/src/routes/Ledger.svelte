@@ -72,6 +72,9 @@
   let restoring = $state<string | null>(null); // op_id being restored (op-scoped)
   let restored = $state<Set<number>>(new Set()); // seqs restored in this session
   let restoreErr = $state<string | null>(null);
+  // D-26 keep-both disclosure: a restore whose original path was occupied lands
+  // at `name-1` instead of `name`. Benign, but surprising — it must be said.
+  let restoreNotice = $state<{ n: number; to: string[] } | null>(null);
   // D-29: countdown ticks from ledger-recorded grace_expires_at only.
   let now = $state(Date.now());
 
@@ -214,19 +217,31 @@
     const opId = opIdOf(rec.quarantine_path);
     restoring = opId;
     restoreErr = null;
+    restoreNotice = null;
     const ch = channel<ExecMsg>();
-    ch.onmessage = () => {
-      /* restore progress streams through the channel; the tail refresh below
-         shows the resulting ledger `restore` record (P7: ledger is the proof). */
+    // `EntryRestored{cid, to}` carries the FINAL target path — for a collided
+    // entry that is the `name-1` keep-both path, which is exactly the fact the
+    // returned `collided` list (cids only) cannot convey. Buffer it so the
+    // disclosure below can name the real file.
+    const restoredTo = new Map<string, string>();
+    ch.onmessage = (msg: ExecMsg) => {
+      if (msg.t === "restored") restoredTo.set(msg.cid, msg.to);
+      /* the tail refresh below shows the resulting ledger `restore` record
+         (P7: ledger is the proof). */
     };
     try {
       // restore_op resolves with { restored: string[], missing: string[],
       // collided: string[] } (demo mode: { ok, restored: number }).
       const res = (await invoke("restore_op", { opId, channel: ch })) as {
         restored: unknown;
+        collided?: unknown;
       };
       const restoredCount =
         typeof res.restored === "number" ? res.restored : Array.isArray(res.restored) ? res.restored.length : 0;
+      // D-26: the original path was occupied, so the file came back as
+      // `name-1` rather than `name`. The backend has computed and returned this
+      // list all along; nothing read it, so the rename happened silently.
+      const collided = Array.isArray(res.collided) ? (res.collided as string[]) : [];
       // Op-scoped: one click restores EVERY apply row of the op. A no-op click
       // (nothing left in quarantine — already purged/missing) marks NONE.
       if (restoredCount > 0) {
@@ -238,6 +253,12 @@
           }
         }
         restored = next;
+      }
+      if (collided.length > 0) {
+        // Prefer the streamed final path; fall back to the cid when the event
+        // was not seen (demo mode has no channel, but it also has no collisions).
+        const to = collided.map((cid) => restoredTo.get(cid) ?? cid);
+        restoreNotice = { n: collided.length, to };
       }
       await refresh();
     } catch (e) {
@@ -293,6 +314,23 @@
           <div class="rt-title">{t("ledger.err_restore")}</div>
           <div class="rt-body">
             <span class="mono">{restoreErr}</span>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if restoreNotice}
+      <div class="refusal notice">
+        <span class="rdot"></span>
+        <div>
+          <div class="rt-title">
+            {t("ledger.collided").replace("{n}", String(restoreNotice.n))}
+          </div>
+          <div class="rt-body">{t("ledger.collided_hint")}</div>
+          <div class="notice-paths mono">
+            {#each restoreNotice.to as p (p)}
+              <div>{p}</div>
+            {/each}
           </div>
         </div>
       </div>
@@ -663,6 +701,20 @@
   }
   .mono {
     font-family: var(--mono);
+  }
+
+  /* D-26 keep-both disclosure — the restore DID succeed, so it reuses the
+     refusal chrome with the "pure/ok" accent rather than the failure red. */
+  .refusal.notice {
+    border-left-color: var(--grade-pure);
+  }
+  .refusal.notice .rdot {
+    background: var(--grade-pure);
+  }
+  .notice-paths {
+    font-size: 11px;
+    color: var(--mist);
+    word-break: break-all;
   }
 
   /* R5: 轨迹 Trajectory — saved agent sessions, read-only history view */
