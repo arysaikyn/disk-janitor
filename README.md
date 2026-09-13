@@ -83,7 +83,7 @@ cargo test --features llm                                    # 136 tests (adds t
 | M2 plan/execute + WAL + ledger | ✅ | 9fd33f1, 17647bb (crash injection, restore keep-both, non-UTF8 refusal) |
 | M3 GUI shell | ✅ | 97d704f (Tauri 2.11.5, 17 IPC commands, writable-vol dedup) |
 | M4 config + agent + cost | ✅ | 3ed9545, a671575, 77f0b97 (NL policy E2E 腾出 25 GB) |
-| M5 submission deliverables | 🔄 | [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md) |
+| M5 submission deliverables | ✅ | design-document PDF · Tsinghua Git source · [`docs/ai-logs/raw/`](docs/ai-logs/raw/) (18 sessions, full conversation history) · [`docs/expense-sheet.xlsx`](docs/expense-sheet.xlsx) — [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md) |
 
 ## Documentation
 
