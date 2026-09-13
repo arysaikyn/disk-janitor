@@ -17,9 +17,12 @@ ADRs 17/17 owner-stamped (13/14/16/17/18 line-reviewed 09-07) · decisions D-01�
 confirmed (Round 4 landed 09-01; D-32…D-38 dispositioned 2026-09-10 — recorded in
 `docs/decision-sheet-2026-09-10.md`, not this register) · course deadlines re-verified 09-08 against the official
 作业要求 (`lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/`): 9.1 comments · 9.6
-public-demo post · 9.8 try-3-works feedback (⚠ **both status UNKNOWN — no vault artifact either way**;
-confirm on the forum, see `deliverables-checklist.md` §Participation) · 9.10 课堂展示 (**delivered 09-10**) · 9.13
-final submission. R1–R6 mapping verified verbatim against the rubric.
+public-demo post (**✅ done 09-06**) · 9.8 try-3-works feedback (**✅ done 09-08**, 5 pts
+earned) · 9.10 课堂展示 (**delivered 09-10**) · 9.13 final submission. Both 9.6/9.8 were
+long recorded here as UNKNOWN — **that was a vault/repo record gap, not a miss**: the
+submissions are forum-side, so no local artifact could evidence them; Arys confirmed both
+2026-09-14. See `deliverables-checklist.md` §Participation. R1–R6 mapping verified verbatim
+against the rubric.
 **Evidence base:** `research/` — 33 verified notes (01–13 verified at source; 14–20 landed
 09-01; 21 landed 09-07 — 15/17/19 vendor-URL re-verify queued; 22–33 landed 09-13, the
 code-level borrow sweep behind 技术选型, each ending in a `## Port backlog` table) + the
@@ -323,7 +326,7 @@ resynced to the shipped counts in the same commit.
 | UI/UX design | ✅ UX-SPEC complete (wireframes, flows, purge ceremony) + interactive visual mockup (`docs/mockups/`, all screens, 09-08) |
 | **Implementation** | ✅ **M1–M4 done** — 126 tests green across 13 suites; CLI flow (scan → plan → apply → purge → restore, kill -9 crash-safe) and GUI flow (scan 51 → plan 44 → apply 17.7 GB → typed-gate purge → restore) verified; **M5 deliverables shipped (09-14)** — see the status snapshot above (`docs/ai-logs/raw/` export, `docs/expense-sheet.xlsx`) |
 | **09-10 课堂展示** (5 min demo + 2 min Q&A; 25 pts) | ✅ delivered 09-10 — deck committed at `docs/presentation/ai-experience.{html,pdf,png}` (`acd44e3`); competitor/presentation research: note 13 |
-| **09-08 23:59 try-3-works feedback** (5 pts participation) | ⚠ deadline passed — **status UNKNOWN, not negative.** The vault holds no artifact either way: `night-think/2026-W37.md:20` records the 09-06 公开展示帖 status as UNKNOWN, `:34`/`:101` show zero evidence of a 试用反馈 post through 09-10, and `vault/Courses/Rust/Agent-Project.md:24` carries the 09-06 row with no ✅. Confirm both on the course forum before 9.13; do not record a ✅ the vault does not support |
+| **09-06 公开展示帖 + 09-08 23:59 try-3-works feedback** (5 pts participation) | ✅ **both done on time — confirmed by Arys 2026-09-14.** Long recorded here as *status UNKNOWN*; that was a **record gap, not a miss** — the 公开展示帖 and the 试用反馈 post live server-side on the course forum, so `night-think/2026-W37.md` legitimately held zero evidence and `vault/Courses/程序设计训练(Rust)/Agent-Project.md:24` carried the 09-06 row with no ✅. His confirmation supersedes: `deliverables-checklist.md` §Participation now carries ✅ on both, and the vault rows were corrected in place the same day. **The 5 pts are earned, not at risk** |
 
 
 # Part B — Technical design

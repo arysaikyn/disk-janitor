@@ -1,7 +1,7 @@
 # 开销明细表 — AI development cost by phase (M5 / 作业要求 item 4)
 
 Course deliverable: **「AI 开发开销明细表 Excel（分阶段: 人时 / API次数 / tokens / 花费 / 模型 / 工具）」** —
-`~/vault/Courses/Rust/Agent-Project.md`, deliverables item 4.
+`~/vault/Courses/程序设计训练(Rust)/Agent-Project.md`, deliverables item 4.
 
 **Machine-readable copy: [`docs/expense-sheet.xlsx`](expense-sheet.xlsx)** — four sheets
 (分阶段 / 逐日 / 工具 / 方法). Regenerate both the workbook and the tables below with:
