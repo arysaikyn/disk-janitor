@@ -1201,6 +1201,13 @@ mod demo {
 
     /// build_plan demo plan (ipc.ts build_plan case; hands_off candidate excluded).
     pub fn plan() -> Value {
+        // The demo mirrors the real `build_plan` envelope (D-38), so the snapshot is
+        // the real default policy — derived from the one definition rather than
+        // hand-copied, so a preset edit can never leave the demo lying about the
+        // policy behind its entries (`PlanReview.svelte` renders this in 查看 JSON).
+        let policy_snapshot =
+            serde_json::to_value(disk_janitor::plan::PolicyConstraintsShape::default())
+                .unwrap_or(Value::Null);
         let entries: Vec<Value> = candidates()
             .into_iter()
             .filter(|c| c.get("grade").and_then(Value::as_str) != Some("hands_off"))
@@ -1227,7 +1234,7 @@ mod demo {
                 "refused": 3u64,
                 "snapshot_caveat": Value::Null,
             },
-            "policy_snapshot": {},
+            "policy_snapshot": policy_snapshot,
         })
     }
 

@@ -181,6 +181,30 @@ const hasTauri = () =>
 // resolves early with stop_reason "user_cancel" (mirrors the atomic in AgentState).
 let demoAgentCancel = false;
 
+/** The default policy the real `build_plan` snapshots into the manifest
+ * (`PolicyConstraintsShape::default()`, src/plan.rs). Hand-mirrored because the
+ * browser path has no Rust runtime; keep in step with `DEFAULT_DENY_GLOBS` and
+ * the `Default` impl — `PlanReview`'s 查看 JSON renders this verbatim, so a drift
+ * makes the demo lie about the policy behind its entries. */
+const DEMO_POLICY_SNAPSHOT = {
+  target_bytes: null,
+  min_bytes: 52_428_800,
+  allow_grades: ["pure_cache", "rebuildable_from_source", "redownloadable"],
+  deny_globs: [
+    "*/.git/*",
+    "*/node_modules/*",
+    "*/lost+found/*",
+    "*/Trash/*",
+    "*/.Trash-*/*",
+    "/Users/*/Library/Caches/*",
+  ],
+  deny_under_mta_secs: 0,
+  allow_network_regen: true,
+  allow_prune_commands: true,
+  grace_hours: 72,
+  max_entries: 10_000,
+};
+
 const DEMO_CANDIDATES: CandidateDto[] = [
   {
     id: "c1",
@@ -385,7 +409,7 @@ function demo<T>(cmd: string, args?: Record<string, unknown>): T {
           refused: 3,
           snapshot_caveat: null,
         },
-        policy_snapshot: {},
+        policy_snapshot: DEMO_POLICY_SNAPSHOT,
       } as T;
     case "apply_plan":
       // Same shape as commands.rs drain_exec + apply_plan report.
