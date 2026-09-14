@@ -316,7 +316,7 @@ sweep that backs 技术选型 (notes 22–33). **09-14 — the last graded gap c
 conversation history is exported in-repo as a redacted projection (`docs/ai-logs/raw/`,
 18 sessions + `index.md`) by `scripts/gen-ai-transcript.py`, with the deck and checklist
 resynced to the shipped counts in the same commit; a final re-export before sealing extends
-the shipped coverage to **2026-09-14T02:15Z** (the closing session `5755→6394` records,
+the shipped coverage to **2026-09-14T02:17Z** (the closing session `5755→6455` records,
 human turns `145→146`) and the three date-range copies follow in the same commit. **09-14 — README completed against the
 作业要求**: `## 配置 Endpoint / Key` (config.toml per-OS path, full field list, the four
 `DISK_JANITOR_*` overrides, the key-never-written-back invariants) and `## 演示用例`
