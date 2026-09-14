@@ -8,7 +8,11 @@ const OUT_CUBIC = Easing.out(Easing.cubic);
 
 const SENTENCE = "把你的磁盘还给你";
 const WORDMARK = "你值得你的空间";
-const REPO = "源码 · github.com/arysaikyn/disk-janitor";
+// 清华 Git 地址分两行：合并一行时 44px 宽 1593px，超出 9:16 合成的 1080px 画幅
+// （vertical prop 未实现，竖版沿用同一套绝对像素布局）→ 中段折行会被裁切。
+// 拆成 host / path 两行后分别为 669px / 898px，16:9 与 9:16 双安全，且保持 44px 不缩字号。
+const REPO_HOST = "源码 · git.tsinghua.edu.cn";
+const REPO_PATH = "rust-course/2026/agent/agent-aes25";
 
 // 颗粒场：80 粒，mulberry 经 random(seed) 派生（确定性）
 const GRAINS = 80;
@@ -89,7 +93,7 @@ export const S11Signoff: React.FC = () => {
         ))}
       </div>
 
-      {/* CTA：品牌句下 · 仓库 URL（全片最不该小的一行：56px ≥ 字幕线） */}
+      {/* CTA：品牌句下 · 仓库 URL（全片最不该小的一行：44px ≥ 字幕线；两行保持字号不缩） */}
       <div
         style={{
           position: "absolute",
@@ -99,11 +103,13 @@ export const S11Signoff: React.FC = () => {
           textAlign: "center",
           fontFamily: T.mono,
           fontSize: 44,
+          lineHeight: 1.3,
           color: T.mist,
           opacity: urlOp,
         }}
       >
-        {REPO}
+        <div>{REPO_HOST}</div>
+        <div>{REPO_PATH}</div>
       </div>
       <div
         style={{

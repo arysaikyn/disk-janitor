@@ -14,7 +14,7 @@ export const CAPTIONS = [
   { shot: "s8_card3", line: "每一笔，都有台账。" },
   { shot: "s9_ledger", line: "隔离 · 销毁 · 恢复 —— 每一笔都记在台账" },
   { shot: "s10_finale", line: "还我磁盘 / DISK JANITOR" },
-  { shot: "s11_signoff", line: "你值得你的空间 / 源码 github.com/arysaikyn/disk-janitor" },
+  { shot: "s11_signoff", line: "你值得你的空间 / 源码 git.tsinghua.edu.cn/rust-course/2026/agent/agent-aes25" },
 ] as const;
 
 export const UNITS = [

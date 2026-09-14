@@ -13,4 +13,6 @@
 2. P1：slam/动作节奏错位 — S6 滚轮锁定点→b82、S11 凝聚→b164、S1 贴回→b24+8、S10 pop 钉回飞入窗口 — 已修
 3. P1：S11 末行「9.10 课堂见」杜撰+过小 → 替换 i18n 真文案「零遥测 · 无账号 · 扫描只读元数据」34px — 已修
 
-待 owner：把 CTA 占位 URL（github.com/arysaikyn/disk-janitor）替换为清华 Git 实际地址后重渲（一条字符串 + npx remotion render）。
+CTA 占位 URL 已于 2026-09-14 替换为清华 Git 实际地址
+（`git.tsinghua.edu.cn/rust-course/2026/agent/agent-aes25`）并重渲。
+因 44px 下合并一行宽 1593px、超出 9:16 合成的 1080px 画幅，改为 host / path 两行排版，字号不缩。

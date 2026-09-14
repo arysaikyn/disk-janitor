@@ -13,7 +13,7 @@
 | 必须展示 | ① orb/仪表盘 ② 扫描 ③ 证据审核 ④ 一键清理 ⑤ purge 仪式 ⑥ 台账 | 五屏+不变量 |
 | 数据口径 | :1420 demo 合成数据（虚构造盘 1000GB/612.4GB/18.9GB），无隐私风险，可入片 | D-38 --demo-data |
 | One Thing | **你值得你的空间** | Layer 0 |
-| CTA | 品牌句 + 仓库 URL（占位 `github.com/arysaikyn/disk-janitor`，交付前 owner 替换清华 Git） | Phase A gate |
+| CTA | 品牌句 + 仓库 URL（`git.tsinghua.edu.cn/rust-course/2026/agent/agent-aes25`，已替换占位） | Phase A gate |
 
 ## 1. 音乐结构表（beat_data.json 审计链）
 
@@ -68,7 +68,7 @@ hairline `rgba(139,152,168,.14)`；圆角 6/10/16 concentric；字体 SF Pro Tex
 | S8 | b98–b104 | 1475–1565 | 3.0s | 呼吸字卡 3 | 「每一笔，都有台账。」 | 手搓字卡 | 每一笔，都有台账。 | 硬切 / marker-pen-line |
 | S9 | b104–b122 | 1565–1835 | 9.0s | scanline-assemble-flyin | 台账记录态：扫描线扫过→隔离/销毁/恢复行逐条组装 | Ledger 截图 2x | 台账 / 隔离 · 销毁 · 恢复 / 72h 宽限 | whoosh / sweep-fast, row pop 阶梯 |
 | S10 | b122–b146 | 1835–2195 | 12.0s | logo-shrink-wordmark-lockup | 已展示功能代表元素（orb/扫描行/证据点/数字/台账行）四方向飞入→teal 环收束成 orb→字标 lockup | 手搓组装 + 元素 cutout | 还我磁盘 | b159（79.7s 全曲尾段最强 kick）= 环收束落位 |
-| S11 | b146–b170 | 2195–2555 | 12.0s | grain-dissolve | 长句→颗粒爆散→凝聚「你值得你的空间」发光字标→**slam b164(2465)**→仓库 URL + hold ≥1s→随 BGM fade | 手搓（品牌段） | 你值得你的空间 / 源码 github.com/arysaikyn/disk-janitor | **slam b164** / impact loudest, sparkle-wand, 声音随 fade |
+| S11 | b146–b170 | 2195–2555 | 12.0s | grain-dissolve | 长句→颗粒爆散→凝聚「你值得你的空间」发光字标→**slam b164(2465)**→仓库 URL + hold ≥1s→随 BGM fade | 手搓（品牌段） | 你值得你的空间 / 源码 git.tsinghua.edu.cn/rust-course/2026/agent/agent-aes25 | **slam b164** / impact loudest, sparkle-wand, 声音随 fade |
 
 **段落能量核对**：S0 低→S1 中（质感最慢镜）→S2 中→S3 低→S4 中高→S5 低→S6 高→S7 中
 （breakdown 段天然呼吸）→S8 低→S9 中高→S10 峰→S11 收。高/低无三连；手法 9 种各 1 次；
