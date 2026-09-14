@@ -5,7 +5,7 @@ lets you undo everything.** Native macOS desktop app (Tauri + Svelte + Rust). Co
 project for 程序设计训练（Rust 语言）(30240522-3), Tsinghua CS, 2025–2026 summer term.
 
 **Status: M1–M4 implemented and verified (126 tests green across 13 suites; CLI + GUI
-flows proven end-to-end) — M5 is the 9.13 submission deliverables, tracked in
+flows proven end-to-end) — M5 submission deliverables shipped 2026-09-14, tracked in
 [`docs/deliverables-checklist.md`](docs/deliverables-checklist.md).** Start reading at
 [`docs/SPEC.md`](docs/SPEC.md) (Part A = overview; History keeps the real timeline).
 
