@@ -315,7 +315,13 @@ Excel (`docs/expense-sheet.xlsx`, mined from session usage data) and the code-le
 sweep that backs 技术选型 (notes 22–33). **09-14 — the last graded gap closed**: the full AI
 conversation history is exported in-repo as a redacted projection (`docs/ai-logs/raw/`,
 18 sessions + `index.md`) by `scripts/gen-ai-transcript.py`, with the deck and checklist
-resynced to the shipped counts in the same commit.
+resynced to the shipped counts in the same commit. **09-14 — README completed against the
+作业要求**: `## 配置 Endpoint / Key` (config.toml per-OS path, full field list, the four
+`DISK_JANITOR_*` overrides, the key-never-written-back invariants) and `## 演示用例`
+(real-data CLI / `fixture-gen` synthetic tree / GUI `--demo-data`), closing the three
+README obligations 怎么编译 / 怎么配置 / 怎么运行 + 演示用例; the same pass corrected
+`[[model.prices]]` → `[[prices]]` (the field is top-level on `Config`, not nested) in the
+ADR register and research note 07, where the wrong path had been recorded.
 
 ## Where we are (2026-09-08)
 

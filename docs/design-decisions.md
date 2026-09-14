@@ -525,7 +525,7 @@ models — DeepSeek/Ollama use their own BPE, so local estimates are approximati
 - Per-call `CompletionUsage` is captured on every model response (non-streaming loop per
   ADR-6, so the usage chunk cannot be lost mid-stream) and persisted as a `budget` ledger
   record; running cost = Σ over the session [07 §cost][08 §8].
-- Pricing lives in `config.toml` as `[[model.prices]]` per 1M tokens
+- Pricing lives in `config.toml` as a top-level `[[prices]]` array of tables per 1M tokens
   (`prompt_miss`, `prompt_hit`, `completion`, reasoning billed at completion rate when
   listed); DeepSeek peak/off-peak is modeled as multiple `ModelPrice` entries keyed by model
   name [07 §cost][DESIGN §3.9].

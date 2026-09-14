@@ -87,7 +87,7 @@ fragmented by `index` — accumulate arguments per index before parsing
 
 ### Cost accounting design (config R3 + R6)
 
-Config table `[[model.prices]]` per 1M tokens: `prompt_miss`, `prompt_hit`, `completion`,
+Config table `[[prices]]` (top-level array of tables) per 1M tokens: `prompt_miss`, `prompt_hit`, `completion`,
 `reasoning` ( billed at completion rate when listed). Per-call cost:
 `(prompt_tokens - cached)·p_miss + cached·p_hit + completion_tokens·p_completion`
 (reasoning tokens are already inside `completion_tokens` — do not double-count).
